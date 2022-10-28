@@ -14,7 +14,7 @@ namespace PsfParamFinder
         public uint crc;
         public uint jumppatch;
         public List<SongArea> blocks;
-        public List<PsfParamater> psfparams;
+        public List<PsfParameter> psfparams;
         /*
         public InternalParams()
         {
@@ -37,11 +37,11 @@ namespace PsfParamFinder
     }
 
     [Serializable]
-    public struct PsfParamater
+    public struct PsfParameter
     {
         public string name;
         public byte[] value;
-        public PsfParamater(string n, byte[] v)
+        public PsfParameter(string n, byte[] v)
         {
             name = n;
             value = new byte[v.Length];
@@ -53,31 +53,8 @@ namespace PsfParamFinder
     {
         static void Main(string[] args)
         {
-            //int sig = sigpos("h:\\xdcc\\generic.exe");
             binvals("h:\\xdcc\\generic.exe");
         }
-        /*
-        static int sigpos(string file)
-        {
-            try
-            {
-                //FileStream fs = File.Open(file, FileMode.Open);
-                StreamReader sr = new StreamReader(file, System.Text.Encoding.ASCII);
-                string psfexe = sr.ReadToEnd();
-                int sig = psfexe.IndexOf("PSF_DRIVER_INFO:");
-                
-                //sr.ReadToEnd();
-                sr.Close();
-                sr.Dispose();
-                return sig;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-            }
-            return -1;
-        }
-        */
         static string nullterm(string s, int index)
         {
             return s.Substring(index, s.IndexOf('\0', index) - index);
@@ -88,6 +65,8 @@ namespace PsfParamFinder
             try
             {
                 uint param, param2;
+                int param3;
+                long postemp;
                 FileStream fs = File.Open(file, FileMode.Open);
                 BinaryReader br = new BinaryReader(fs);
                 StreamReader sr = new StreamReader(fs, System.Text.Encoding.ASCII);
@@ -101,14 +80,6 @@ namespace PsfParamFinder
                 ip.entrypoint = br.ReadUInt32() - ip.offset;
                 param = br.ReadUInt32() - ip.offset;
                 ip.drivername = nullterm(psfexe, (int)param);
-                //Console.WriteLine(ip.drivername);
-                /*
-                for (int i = 0; i < 40; i++)
-                {
-                    param = br.ReadUInt32();
-                    Console.WriteLine("Parameter #{0} is {1:X} ({2:X})", i, param, param - ip.offset);
-                }
-                */
                 param = br.ReadUInt32() - ip.offset;
                 ip.exename = nullterm(psfexe, (int)param);
                 ip.crc = br.ReadUInt32();
@@ -127,8 +98,28 @@ namespace PsfParamFinder
                     sa.addr = param - ip.offset;
                     sa.size = param2;
                 }
-                fs.Seek(-8, SeekOrigin.Current);
+                fs.Seek(-4, SeekOrigin.Current);
+                param = br.ReadUInt32() - ip.offset;
+                param2 = br.ReadUInt32() - ip.offset;
+                param3 = br.ReadInt32();
+                postemp = fs.Position;
+                fs.Seek(param2, SeekOrigin.Begin);
 
+                while (param != 0 && param2 != 0 && param3 != 0)
+                {
+                    PsfParameter pp = new PsfParameter(nullterm(psfexe, (int)param), br.ReadBytes(param3));
+                    fs.Seek(postemp, SeekOrigin.Begin);
+                    Console.WriteLine("Name: {0} Number of Bytes: {1} Value: {2}", pp.name, param3, BitConverter.ToString(pp.value));
+                    if (param3 == 4)
+                    {
+                        Console.WriteLine("OFFSET VALUE: {0:X}", BitConverter.ToUInt32(pp.value) - ip.offset);
+                    }
+                    param = br.ReadUInt32() - ip.offset;
+                    param2 = br.ReadUInt32() - ip.offset;
+                    param3 = br.ReadInt32();
+                    postemp = fs.Position;
+                    fs.Seek(param2, SeekOrigin.Begin);
+                }
             }
             catch (Exception ex)
             {
