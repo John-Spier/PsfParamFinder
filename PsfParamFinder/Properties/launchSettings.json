@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "PsfParamFinder": {
+      "commandName": "Project",
+      "commandLineArgs": "h:\\xdcc\\generic.exe"
+    }
+  }
+}

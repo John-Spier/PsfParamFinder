@@ -7,6 +7,7 @@ namespace PsfParamFinder
     public class InternalParams
     {
         public uint offset;
+        public int sig;
         public uint loadaddr;
         public uint entrypoint;
         public string drivername;
@@ -14,7 +15,7 @@ namespace PsfParamFinder
         public uint crc;
         public uint jumppatch;
         public List<SongArea> blocks;
-        public List<PsfParameter> psfparams;
+        public Dictionary<string,PsfParameter> psfparams;
         /*
         public InternalParams()
         {
@@ -39,11 +40,11 @@ namespace PsfParamFinder
     [Serializable]
     public struct PsfParameter
     {
-        public string name;
+        public int loc;
         public byte[] value;
-        public PsfParameter(string n, byte[] v)
+        public PsfParameter(int l, byte[] v)
         {
-            name = n;
+            loc = l;
             value = new byte[v.Length];
             v.CopyTo(value, 0);
         }
@@ -53,14 +54,33 @@ namespace PsfParamFinder
     {
         static void Main(string[] args)
         {
-            binvals("h:\\xdcc\\generic.exe");
+            InternalParams testpar = binvals(args[0]);
+            PsfParameter pp;
+
+            foreach (SongArea sa in testpar.blocks)
+            {
+                Console.WriteLine("Saved Block - ADDR: {0} SIZE: {1}", sa.addr, sa.size);
+            }
+            foreach (string sp in testpar.psfparams.Keys)
+            {
+                if(testpar.psfparams.TryGetValue(sp, out pp))
+                {
+                    Console.WriteLine("Name: {0} Number of Bytes: {1} Value: {2}", sp, pp.value.Length, BitConverter.ToString(pp.value));
+                    if (pp.value.Length == 4)
+                    {
+                        Console.WriteLine("OFFSET VALUE: {0:X}", BitConverter.ToUInt32(pp.value) - testpar.offset);
+                    }
+                }
+
+            }
+            
         }
         static string nullterm(string s, int index)
         {
             return s.Substring(index, s.IndexOf('\0', index) - index);
         }
 
-        static void binvals(string file)
+        static InternalParams binvals(string file)
         {
             try
             {
@@ -71,11 +91,12 @@ namespace PsfParamFinder
                 BinaryReader br = new BinaryReader(fs);
                 StreamReader sr = new StreamReader(fs, System.Text.Encoding.ASCII);
                 string psfexe = sr.ReadToEnd();
-                int sig = psfexe.IndexOf("PSF_DRIVER_INFO:");
                 InternalParams ip = new InternalParams();
+                ip.sig = psfexe.IndexOf("PSF_DRIVER_INFO:");
+                
                 fs.Seek(24, SeekOrigin.Begin);
                 ip.offset = br.ReadUInt32() - 2048;
-                fs.Seek(sig + 16, SeekOrigin.Begin);
+                fs.Seek(ip.sig + 16, SeekOrigin.Begin);
                 ip.loadaddr = br.ReadUInt32() - ip.offset;
                 ip.entrypoint = br.ReadUInt32() - ip.offset;
                 param = br.ReadUInt32() - ip.offset;
@@ -98,6 +119,7 @@ namespace PsfParamFinder
                     sa.addr = param - ip.offset;
                     sa.size = param2;
                 }
+                ip.psfparams = new Dictionary<string, PsfParameter>();
                 fs.Seek(-4, SeekOrigin.Current);
                 param = br.ReadUInt32() - ip.offset;
                 param2 = br.ReadUInt32() - ip.offset;
@@ -107,24 +129,23 @@ namespace PsfParamFinder
 
                 while (param != 0 && param2 != 0 && param3 != 0)
                 {
-                    PsfParameter pp = new PsfParameter(nullterm(psfexe, (int)param), br.ReadBytes(param3));
+                    PsfParameter pp = new PsfParameter((int)param, br.ReadBytes(param3));
+                    ip.psfparams.Add(nullterm(psfexe, (int)param), pp);
                     fs.Seek(postemp, SeekOrigin.Begin);
-                    Console.WriteLine("Name: {0} Number of Bytes: {1} Value: {2}", pp.name, param3, BitConverter.ToString(pp.value));
-                    if (param3 == 4)
-                    {
-                        Console.WriteLine("OFFSET VALUE: {0:X}", BitConverter.ToUInt32(pp.value) - ip.offset);
-                    }
+
                     param = br.ReadUInt32() - ip.offset;
                     param2 = br.ReadUInt32() - ip.offset;
                     param3 = br.ReadInt32();
                     postemp = fs.Position;
                     fs.Seek(param2, SeekOrigin.Begin);
                 }
+                return ip;
             }
             catch (Exception ex)
             {
                 Console.WriteLine(ex.Message);
             }
+            return null;
         }
     }
 }
