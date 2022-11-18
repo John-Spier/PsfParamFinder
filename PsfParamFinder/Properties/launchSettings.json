@@ -2,7 +2,7 @@
   "profiles": {
     "PsfParamFinder": {
       "commandName": "Project",
-      "commandLineArgs": "generic.psf"
+      "commandLineArgs": "mini.minipsf"
     }
   }
 }

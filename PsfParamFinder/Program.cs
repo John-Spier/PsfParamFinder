@@ -69,16 +69,10 @@ namespace PsfParamFinder
         static void Main(string[] args)
         {
             PsfTable mem = LoadFile(args[0]);
-            //byte[] mem = File.ReadAllBytes(args[0]);
 
-
-
-            //FileStream fstream = File.Open(args[0], FileMode.Open);
             MemoryStream fstream = new MemoryStream(mem.ram);
             InternalParams testpar = binvals(fstream);
             PsfParameter pp;
-            //BinaryPrimitives.ReadInt32LittleEndian(fstream);
-            //BinaryPrimitives.ReverseEndianness()
             if (testpar == null)
             {
                 return;
@@ -102,34 +96,72 @@ namespace PsfParamFinder
             }
             
         }
-        /*
-         * use int32le, etc
-        static uint endfix(uint i)
-        {
-            if (BitConverter.IsLittleEndian)
-            {
-                return i;
-            }
-            else
-            {
-                return BinaryPrimitives.ReverseEndianness(i);
-            }
-        }
-        static int endfix(int i)
-        {
-            if (BitConverter.IsLittleEndian)
-            {
-                return i;
-            }
-            else
-            {
-                return BinaryPrimitives.ReverseEndianness(i);
-            }
-        }
-        */
         static string nullterm(string s, int index)
         {
             return s.Substring(index, s.IndexOf('\0', index) - index);
+        }
+
+        static string[] psflibs(BinaryReader br, int tagpos)
+        {
+            List<string> liblines = new List<string>();
+            StreamReader sr = new StreamReader(br.BaseStream);
+            string lib = "";
+            if (tagpos < 0)
+            {
+                br.BaseStream.Seek(4, SeekOrigin.Begin);
+                uint rsize = br.ReadUInt32();
+                uint psize = br.ReadUInt32();
+                br.BaseStream.Seek(16 + psize + rsize, SeekOrigin.Begin);
+            }
+            else
+            {
+                br.BaseStream.Seek(tagpos, SeekOrigin.Begin);
+            }
+
+            
+            uint tagsig = br.ReadUInt32();
+            
+            if (tagsig == 0x4741545B && br.ReadByte() == 0x5D)
+            {
+                while (sr.Peek() >= 0)
+                {
+                    try
+                    {
+                        lib = sr.ReadLine();
+                        //libs = lib.Split('=');
+                        //Console.WriteLine(lib);
+                        if (lib.ToLowerInvariant().StartsWith("_lib"))
+                        {
+                            //mini = true;
+                            //Console.WriteLine("{0} - is a minipsf", lib);
+                            //break;
+                            liblines.Add(lib);
+                        }
+                    }
+                    catch (Exception tx)
+                    {
+                        Console.WriteLine("Exception: {0}", tx.Message);
+                        Console.WriteLine("{0} was not a valid tag line", lib);
+                    }
+
+                }
+            }
+            liblines.Sort();
+            List<string> libs = new List<string>();
+
+            foreach(string ls in liblines)
+            {
+                try
+                {
+                    libs.Add(ls.Split('=', StringSplitOptions.RemoveEmptyEntries)[1]);
+                }
+                catch (Exception lx)
+                {
+                    Console.WriteLine("{0} was not a valid library", ls);
+                    Console.WriteLine("Exception: {0}", lx.Message);
+                }
+            }
+            return libs.ToArray();
         }
 
         static PsfTable LoadFile(string filename)
@@ -138,21 +170,21 @@ namespace PsfParamFinder
             BinaryReader br = new BinaryReader(fs);
             uint ftype = br.ReadUInt32();
             PsfTable pt = null;
-            //pt.minipsfs = new List<PsfFile>();
             switch (ftype)
             {
                 case 0x01465350: //PSF
-                    uint rsize = br.ReadUInt32();
-                    uint psize = br.ReadUInt32();
-                    fs.Seek(16 + psize + rsize, SeekOrigin.Begin);
-                    StreamReader sr = new StreamReader(fs);
-                    uint tagsig = br.ReadUInt32();
-                    
-                    if (tagsig == 0x4741545B && br.ReadByte() == 0x5D) {
-                        Console.WriteLine(sr.ReadToEnd());
+                    string[] pl = psflibs(br, -1);
+                    if (pl.Length > 0)
+                    {
+                        fs.Dispose();
+                        pt = LoadMiniPsf(filename);
                     }
-                    
-                    fs.Dispose();
+                    else
+                    {
+                        pt = LoadPsf(br);
+                        fs.Dispose();
+                    }
+
                     break;
                 case 0x582D5350: //PSX EXE
                     pt = LoadExe(br);
@@ -174,6 +206,11 @@ namespace PsfParamFinder
             return null;
         }
 
+        static PsfTable LoadPsf(BinaryReader f)
+        {
+            return null;
+        }
+
         static PsfTable LoadExe(BinaryReader b)
         {
             
@@ -183,13 +220,6 @@ namespace PsfParamFinder
             psf.ram = b.ReadBytes((int)b.BaseStream.Length);
             return psf;
         }
-        /*
-        static PsfFile RamParams(BinaryReader m)
-        {
-            PsfFile pf = new PsfFile();
-            m.BaseStream.Seek(4, SeekOrigin.Begin);
-        }
-        */
         static InternalParams binvals(Stream fs)
         {
             try
@@ -237,8 +267,6 @@ namespace PsfParamFinder
                 param2 = tparam2 % 0x20000000 - ipoffset;
                 param3 = br.ReadInt32();
                 postemp = fs.Position;
-                //fs.Seek(param2, SeekOrigin.Begin);
-
                 while (tparam != 0 && tparam2 != 0 && param3 != 0)
                 {
                     fs.Seek(param2, SeekOrigin.Begin);
