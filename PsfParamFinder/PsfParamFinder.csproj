@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Crc32.NET" Version="1.2.0" />
     <PackageReference Include="Ionic.Zlib.Core" Version="1.0.0" />
   </ItemGroup>
 

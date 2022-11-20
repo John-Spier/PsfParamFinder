@@ -4,6 +4,7 @@ using System.IO;
 //using System.Buffers.Binary;
 //using ComponentAce.Compression.Libs.zlib;
 using Ionic.Zlib;
+using Force.Crc32;
 
 namespace PsfParamFinder
 {
@@ -208,7 +209,37 @@ namespace PsfParamFinder
 
         static PsfTable LoadPsf(BinaryReader f)
         {
-            return null;
+            PsfTable ptab = new PsfTable();
+            ptab.ftype = PsfTypes.PSF;
+            ptab.minipsfs = new List<PsfFile>();
+            PsfFile info = new PsfFile();
+            byte[] tempram = new byte[0x200000];
+            f.BaseStream.Seek(4, SeekOrigin.Begin);
+            int rsize = f.ReadInt32();
+            int psize = f.ReadInt32();
+            info.crc = f.ReadUInt32();
+            info.modified = false;
+            //f.BaseStream.Seek(16, SeekOrigin.Begin);
+            info.reserved_area = f.ReadBytes(rsize);
+            ZlibStream zlib = new ZlibStream(f.BaseStream, CompressionMode.Decompress);
+            int bytesread = zlib.Read(tempram, 0, 0x200000);
+            info.headersect = new byte[2048];
+            //tempram.CopyTo(info.headersect, 0);
+            Array.Copy(tempram, info.headersect, 2048);
+            ptab.ram = new byte[bytesread];
+            //tempram.CopyTo(ptab.ram, 0);
+            Array.Copy(tempram, ptab.ram, bytesread);
+            f.BaseStream.Seek(16 + psize + rsize, SeekOrigin.Begin);
+            info.tags = f.ReadBytes((int)f.BaseStream.Length - (int)f.BaseStream.Position);
+            f.BaseStream.Seek(16 + rsize, SeekOrigin.Begin);
+            tempram = f.ReadBytes(psize);
+            if (Crc32Algorithm.Compute(tempram) != info.crc)
+            {
+                Console.WriteLine("Wrong CRC!");
+            }
+            
+            ptab.minipsfs.Add(info);
+            return ptab;
         }
 
         static PsfTable LoadExe(BinaryReader b)
