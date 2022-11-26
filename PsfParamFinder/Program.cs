@@ -16,6 +16,7 @@ namespace PsfParamFinder
     }
     public class PsfFile
     {
+        public uint segment;
         public bool modified;
         public string filename;
         public byte[] headersect;
@@ -70,6 +71,35 @@ namespace PsfParamFinder
         static void Main(string[] args)
         {
             PsfTable mem = LoadFile(args[0]);
+            if (args.Length > 1)
+            {
+                byte[] exe = File.ReadAllBytes(args[1]);
+                foreach (PsfFile se in mem.minipsfs)
+                {
+                    Console.WriteLine("{0} Text Addr: {1:X} Text Size: {2:X} PC: {3:X} SP: {4:X}",
+                        se.filename,
+                        BitConverter.ToUInt32(se.headersect, 24),
+                        BitConverter.ToUInt32(se.headersect, 28),
+                        BitConverter.ToUInt32(se.headersect, 16),
+                        BitConverter.ToUInt32(se.headersect, 48));
+                    for (int i = 0; i < 2048; i++)
+                    {
+                        if (se.headersect[i] != exe[i])
+                        {
+                            //Console.WriteLine("Byte 0x{0:X}: {1:X2} {2:X2}", i, se.headersect[i], exe[i]);
+                        }
+                    }
+                    for (int i = 0; i < 2048; i += 4)
+                    {
+                        if (BitConverter.ToUInt32(se.headersect, i) != BitConverter.ToUInt32(exe, i))
+                        {
+                            Console.WriteLine("Int32 0x{0:X}: {1:X8} {2:X8}", i, BitConverter.ToUInt32(se.headersect, i), BitConverter.ToUInt32(exe, i));
+                        }
+                    }
+                }
+            }
+
+
 
             MemoryStream fstream = new MemoryStream(mem.ram);
             InternalParams testpar = binvals(fstream);
@@ -102,7 +132,7 @@ namespace PsfParamFinder
             return s.Substring(index, s.IndexOf('\0', index) - index);
         }
 
-        static string[] psflibs(BinaryReader br, int tagpos)
+        static string[] psflibs(BinaryReader br, int tagpos) //fix to match with spec - while loop?
         {
             List<string> liblines = new List<string>();
             StreamReader sr = new StreamReader(br.BaseStream);
@@ -129,13 +159,8 @@ namespace PsfParamFinder
                     try
                     {
                         lib = sr.ReadLine();
-                        //libs = lib.Split('=');
-                        //Console.WriteLine(lib);
                         if (lib.ToLowerInvariant().StartsWith("_lib"))
                         {
-                            //mini = true;
-                            //Console.WriteLine("{0} - is a minipsf", lib);
-                            //break;
                             liblines.Add(lib);
                         }
                     }
@@ -183,6 +208,7 @@ namespace PsfParamFinder
                     else
                     {
                         pt = LoadPsf(br);
+                        pt.minipsfs[0].filename = filename;
                         fs.Dispose();
                     }
 
@@ -204,7 +230,82 @@ namespace PsfParamFinder
 
         static PsfTable LoadMiniPsf(string filename)
         {
-            return null;
+            PsfTable ptab = new PsfTable();
+            ptab.ftype = PsfTypes.MINIPSF;
+            ptab.ram = new byte[0x200000];
+            ptab.minipsfs = new List<PsfFile>();
+            LoadPsfFile(filename, ptab);
+            uint lowest = uint.MaxValue;
+            uint highest = uint.MinValue;
+            foreach (PsfFile se in ptab.minipsfs)
+            {
+                if (se.start < lowest)
+                {
+                    lowest = se.start;
+                }
+                if (se.end > highest)
+                {
+                    highest = se.end;
+                }
+            }
+            byte[] mem = new byte[(highest - lowest) + 2048];
+            Array.Copy(ptab.ram, lowest, mem, 2048, highest - lowest);
+            //what to put for the header? add comparison with exe in main function
+            //size = added up sizes. use the psflib for the header, but change tthe text address and size.
+            //again, calculate text start and text sieze. do not copy it from anywhere
+            return ptab;
+        }
+
+        static bool LoadPsfFile (string fn, PsfTable tab)
+        {
+            try
+            {
+                FileStream file = new FileStream(fn, FileMode.Open);
+                BinaryReader binary = new BinaryReader(file);
+                PsfFile info = new PsfFile();
+                byte[] tempram = new byte[0x200000];
+                binary.BaseStream.Seek(4, SeekOrigin.Begin);
+                int rsize = binary.ReadInt32();
+                int psize = binary.ReadInt32();
+
+                string[] libraries = psflibs(binary, 16 + psize+ rsize);
+                foreach (string l in libraries)
+                {
+                    LoadPsfFile(l, tab);
+                }
+
+                binary.BaseStream.Seek(12, SeekOrigin.Begin);
+                info.crc = binary.ReadUInt32();
+                info.modified = false;
+                info.reserved_area = binary.ReadBytes(rsize);
+                ZlibStream zlib = new ZlibStream(binary.BaseStream, CompressionMode.Decompress);
+                int bytesread = zlib.Read(tempram, 0, 0x200000); 
+                info.headersect = new byte[2048];
+                Array.Copy(tempram, info.headersect, 2048);
+
+                info.segment = BitConverter.ToUInt32(info.headersect, 24) / 0x20000000;
+                info.start = BitConverter.ToUInt32(info.headersect, 24) % 0x20000000;
+                info.end = info.start + (uint)(bytesread - 2048);
+
+                Array.Copy(tempram, 2048, tab.ram, info.start, bytesread - 2048);
+                binary.BaseStream.Seek(16 + rsize, SeekOrigin.Begin);
+                tempram = binary.ReadBytes(psize);
+                if (Crc32Algorithm.Compute(tempram) != info.crc)
+                {
+                    Console.WriteLine("Wrong CRC!");
+                }
+                info.filename = fn;
+                tab.minipsfs.Add(info);
+                binary.Dispose();
+                file.Dispose();
+                return true;
+            }
+            catch (Exception px)
+            {
+                Console.WriteLine("File {0} exception: {1}", fn, px.Message);
+
+            }
+            return false;
         }
 
         static PsfTable LoadPsf(BinaryReader f)
@@ -219,15 +320,12 @@ namespace PsfParamFinder
             int psize = f.ReadInt32();
             info.crc = f.ReadUInt32();
             info.modified = false;
-            //f.BaseStream.Seek(16, SeekOrigin.Begin);
             info.reserved_area = f.ReadBytes(rsize);
             ZlibStream zlib = new ZlibStream(f.BaseStream, CompressionMode.Decompress);
             int bytesread = zlib.Read(tempram, 0, 0x200000);
             info.headersect = new byte[2048];
-            //tempram.CopyTo(info.headersect, 0);
             Array.Copy(tempram, info.headersect, 2048);
             ptab.ram = new byte[bytesread];
-            //tempram.CopyTo(ptab.ram, 0);
             Array.Copy(tempram, ptab.ram, bytesread);
             f.BaseStream.Seek(16 + psize + rsize, SeekOrigin.Begin);
             info.tags = f.ReadBytes((int)f.BaseStream.Length - (int)f.BaseStream.Position);
@@ -237,7 +335,10 @@ namespace PsfParamFinder
             {
                 Console.WriteLine("Wrong CRC!");
             }
-            
+            info.segment = BitConverter.ToUInt32(info.headersect, 24) / 0x20000000;
+            //info.start = BitConverter.ToUInt32(info.headersect, 24) % 0x20000000;
+            info.start = 2048;
+            info.end = (uint)(bytesread - 2048) + info.start;
             ptab.minipsfs.Add(info);
             return ptab;
         }
@@ -251,7 +352,7 @@ namespace PsfParamFinder
             psf.ram = b.ReadBytes((int)b.BaseStream.Length);
             return psf;
         }
-        static InternalParams binvals(Stream fs)
+        static InternalParams binvals(Stream fs) //rewrite this without streams if you ever get around to it
         {
             try
             {
