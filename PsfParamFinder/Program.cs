@@ -5,7 +5,7 @@ using System.IO;
 //using ComponentAce.Compression.Libs.zlib;
 using Ionic.Zlib;
 using Force.Crc32;
-
+//use ipaddress fucntions to change endians?
 namespace PsfParamFinder
 {
     public enum PsfTypes
@@ -74,28 +74,22 @@ namespace PsfParamFinder
             if (args.Length > 1)
             {
                 byte[] exe = File.ReadAllBytes(args[1]);
+                for (int i = 0; i < 2048; i += 4)
+                {
+                    if (BitConverter.ToUInt32(exe, i) != BitConverter.ToUInt32(mem.ram, i))
+                    {
+                        Console.WriteLine("Int32 0x{0:X}: {1:X8} {2:X8}", i, BitConverter.ToUInt32(exe, i), BitConverter.ToUInt32(mem.ram, i));
+                    }
+                }
                 foreach (PsfFile se in mem.minipsfs)
                 {
-                    Console.WriteLine("{0} Text Addr: {1:X} Text Size: {2:X} PC: {3:X} SP: {4:X}",
+                    Console.WriteLine("{0} Text Addr: {1:X8} Text Size: {2:X8} PC: {3:X8} SP: {4:X8} Start: {5:X8}",
                         se.filename,
                         BitConverter.ToUInt32(se.headersect, 24),
                         BitConverter.ToUInt32(se.headersect, 28),
                         BitConverter.ToUInt32(se.headersect, 16),
-                        BitConverter.ToUInt32(se.headersect, 48));
-                    for (int i = 0; i < 2048; i++)
-                    {
-                        if (se.headersect[i] != exe[i])
-                        {
-                            //Console.WriteLine("Byte 0x{0:X}: {1:X2} {2:X2}", i, se.headersect[i], exe[i]);
-                        }
-                    }
-                    for (int i = 0; i < 2048; i += 4)
-                    {
-                        if (BitConverter.ToUInt32(se.headersect, i) != BitConverter.ToUInt32(exe, i))
-                        {
-                            Console.WriteLine("Int32 0x{0:X}: {1:X8} {2:X8}", i, BitConverter.ToUInt32(se.headersect, i), BitConverter.ToUInt32(exe, i));
-                        }
-                    }
+                        BitConverter.ToUInt32(se.headersect, 48),
+                        se.start);
                 }
             }
 
@@ -134,60 +128,67 @@ namespace PsfParamFinder
 
         static string[] psflibs(BinaryReader br, int tagpos) //fix to match with spec - while loop?
         {
-            List<string> liblines = new List<string>();
-            StreamReader sr = new StreamReader(br.BaseStream);
-            string lib = "";
-            if (tagpos < 0)
+            try
             {
-                br.BaseStream.Seek(4, SeekOrigin.Begin);
-                uint rsize = br.ReadUInt32();
-                uint psize = br.ReadUInt32();
-                br.BaseStream.Seek(16 + psize + rsize, SeekOrigin.Begin);
-            }
-            else
-            {
+                List<string> liblines = new List<string>();
+                StreamReader sr = new StreamReader(br.BaseStream);
+                string lib = "";
+                if (tagpos < 0)
+                {
+                    br.BaseStream.Seek(4, SeekOrigin.Begin);
+                    uint rsize = br.ReadUInt32();
+                    uint psize = br.ReadUInt32();
+                    tagpos = (int)(16 + psize + rsize);
+                }
+                if (tagpos > (br.BaseStream.Length - 5))
+                {
+                    return new string[0];
+                }
                 br.BaseStream.Seek(tagpos, SeekOrigin.Begin);
-            }
+                uint tagsig = br.ReadUInt32();
 
-            
-            uint tagsig = br.ReadUInt32();
-            
-            if (tagsig == 0x4741545B && br.ReadByte() == 0x5D)
-            {
-                while (sr.Peek() >= 0)
+                if (tagsig == 0x4741545B && br.ReadByte() == 0x5D)
+                {
+                    while (sr.Peek() >= 0)
+                    {
+                        try
+                        {
+                            lib = sr.ReadLine();
+                            if (lib.ToLowerInvariant().StartsWith("_lib"))
+                            {
+                                liblines.Add(lib);
+                            }
+                        }
+                        catch (Exception tx)
+                        {
+                            Console.WriteLine("Exception: {0}", tx.Message);
+                            Console.WriteLine("{0} was not a valid tag line", lib);
+                        }
+
+                    }
+                }
+                liblines.Sort();
+                List<string> libs = new List<string>();
+
+                foreach (string ls in liblines)
                 {
                     try
                     {
-                        lib = sr.ReadLine();
-                        if (lib.ToLowerInvariant().StartsWith("_lib"))
-                        {
-                            liblines.Add(lib);
-                        }
+                        libs.Add(ls.Split('=', StringSplitOptions.RemoveEmptyEntries)[1]);
                     }
-                    catch (Exception tx)
+                    catch (Exception lx)
                     {
-                        Console.WriteLine("Exception: {0}", tx.Message);
-                        Console.WriteLine("{0} was not a valid tag line", lib);
+                        Console.WriteLine("{0} was not a valid library", ls);
+                        Console.WriteLine("Exception: {0}", lx.Message);
                     }
-
                 }
+                return libs.ToArray();
             }
-            liblines.Sort();
-            List<string> libs = new List<string>();
-
-            foreach(string ls in liblines)
+            catch (Exception mx)
             {
-                try
-                {
-                    libs.Add(ls.Split('=', StringSplitOptions.RemoveEmptyEntries)[1]);
-                }
-                catch (Exception lx)
-                {
-                    Console.WriteLine("{0} was not a valid library", ls);
-                    Console.WriteLine("Exception: {0}", lx.Message);
-                }
+                Console.WriteLine("Tag Exception: {0}", mx.Message);
             }
-            return libs.ToArray();
+            return new string[0];
         }
 
         static PsfTable LoadFile(string filename)
@@ -248,11 +249,19 @@ namespace PsfParamFinder
                     highest = se.end;
                 }
             }
+            
             byte[] mem = new byte[(highest - lowest) + 2048];
             Array.Copy(ptab.ram, lowest, mem, 2048, highest - lowest);
-            //what to put for the header? add comparison with exe in main function
-            //size = added up sizes. use the psflib for the header, but change tthe text address and size.
-            //again, calculate text start and text sieze. do not copy it from anywhere
+            Array.Copy(ptab.minipsfs[0].headersect, mem, 2048);
+            byte[] size = BitConverter.GetBytes(highest - lowest);
+            byte[] start = BitConverter.GetBytes(lowest + (ptab.minipsfs[0].segment * 0x20000000));
+            Array.Copy(start, 0, mem, 0x18, 4);
+            Array.Copy(size, 0, mem, 0x1C, 4);
+            foreach (PsfFile psf in ptab.minipsfs)
+            {
+                psf.start -= lowest - 2048;
+            }
+            ptab.ram = mem;
             return ptab;
         }
 
@@ -268,7 +277,7 @@ namespace PsfParamFinder
                 int rsize = binary.ReadInt32();
                 int psize = binary.ReadInt32();
 
-                string[] libraries = psflibs(binary, 16 + psize+ rsize);
+                string[] libraries = psflibs(binary, 16 + psize + rsize);
                 foreach (string l in libraries)
                 {
                     LoadPsfFile(l, tab);
@@ -292,7 +301,7 @@ namespace PsfParamFinder
                 tempram = binary.ReadBytes(psize);
                 if (Crc32Algorithm.Compute(tempram) != info.crc)
                 {
-                    Console.WriteLine("Wrong CRC!");
+                    Console.WriteLine("{0}: Wrong CRC!", fn);
                 }
                 info.filename = fn;
                 tab.minipsfs.Add(info);
@@ -336,7 +345,6 @@ namespace PsfParamFinder
                 Console.WriteLine("Wrong CRC!");
             }
             info.segment = BitConverter.ToUInt32(info.headersect, 24) / 0x20000000;
-            //info.start = BitConverter.ToUInt32(info.headersect, 24) % 0x20000000;
             info.start = 2048;
             info.end = (uint)(bytesread - 2048) + info.start;
             ptab.minipsfs.Add(info);
