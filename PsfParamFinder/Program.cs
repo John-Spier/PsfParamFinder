@@ -66,60 +66,114 @@ namespace PsfParamFinder
             v.CopyTo(value, 0);
         }
     }
+
     class Program
     {
         static void Main(string[] args)
         {
-            PsfTable mem = LoadFile(args[0]);
-            if (args.Length > 1)
+
+
+            //if (args.Length > 1)
+            //{
+            //    byte[] exe = File.ReadAllBytes(args[1]);
+            //    for (int i = 0; i < 2048; i += 4)
+            //    {
+            //        if (BitConverter.ToUInt32(exe, i) != BitConverter.ToUInt32(mem.ram, i))
+            //        {
+            //            Console.WriteLine("Int32 0x{0:X}: {1:X8} {2:X8}", i, BitConverter.ToUInt32(exe, i), BitConverter.ToUInt32(mem.ram, i));
+            //        }
+            //    }
+            //    foreach (PsfFile se in mem.minipsfs)
+            //    {
+            //        Console.WriteLine("{0} Text Addr: {1:X8} Text Size: {2:X8} PC: {3:X8} SP: {4:X8} Start: {5:X8}",
+            //            se.filename,
+            //            BitConverter.ToUInt32(se.headersect, 24),
+            //            BitConverter.ToUInt32(se.headersect, 28),
+            //            BitConverter.ToUInt32(se.headersect, 16),
+            //            BitConverter.ToUInt32(se.headersect, 48),
+            //            se.start);
+            //    }
+            //}
+            Dictionary<string, PsfParameter> psfParameters = new Dictionary<string, PsfParameter>();
+            Dictionary<string, InternalParams> psfDrivers = new Dictionary<string, InternalParams>();
+            PsfParameter tp;
+            InternalParams td;
+            foreach (string d in Directory.EnumerateDirectories(args[0]))
             {
-                byte[] exe = File.ReadAllBytes(args[1]);
-                for (int i = 0; i < 2048; i += 4)
+                DirParams(d, "*.exe", true, psfParameters, psfDrivers);
+            }
+
+            foreach (string k in psfParameters.Keys)
+            {
+                if (psfParameters.TryGetValue(k, out tp))
                 {
-                    if (BitConverter.ToUInt32(exe, i) != BitConverter.ToUInt32(mem.ram, i))
+                    Console.WriteLine("{0} ({1})", k, tp.value.Length);
+                }
+                
+            }
+            Console.WriteLine("\n\n\n");
+            foreach (string l in psfDrivers.Keys)
+            {
+                if (psfDrivers.TryGetValue(l, out td))
+                {
+                    Console.WriteLine(l);
+                    foreach (string m in td.psfparams.Keys)
                     {
-                        Console.WriteLine("Int32 0x{0:X}: {1:X8} {2:X8}", i, BitConverter.ToUInt32(exe, i), BitConverter.ToUInt32(mem.ram, i));
+                        if (psfParameters.TryGetValue(m, out tp))
+                        {
+                            Console.WriteLine("{0} ({1})", m, tp.value.Length);
+                        }
+
                     }
                 }
-                foreach (PsfFile se in mem.minipsfs)
+                Console.WriteLine("\n\n\n");
+            }
+
+        }
+
+        static void DirParams(string d, string pattern, bool onefilebreak, Dictionary<string, PsfParameter> parameters, Dictionary<string, InternalParams> drivers)
+        {
+            PsfTable mem;
+            foreach (string f in Directory.EnumerateFiles(d, pattern, SearchOption.AllDirectories))
+            {
+                //Console.WriteLine(f);
+                mem = LoadFile(f);
+                MemoryStream fstream = new MemoryStream(mem.ram);
+                InternalParams testpar = binvals(fstream);
+                PsfParameter pp;
+                if (testpar != null)
                 {
-                    Console.WriteLine("{0} Text Addr: {1:X8} Text Size: {2:X8} PC: {3:X8} SP: {4:X8} Start: {5:X8}",
-                        se.filename,
-                        BitConverter.ToUInt32(se.headersect, 24),
-                        BitConverter.ToUInt32(se.headersect, 28),
-                        BitConverter.ToUInt32(se.headersect, 16),
-                        BitConverter.ToUInt32(se.headersect, 48),
-                        se.start);
-                }
-            }
-
-
-
-            MemoryStream fstream = new MemoryStream(mem.ram);
-            InternalParams testpar = binvals(fstream);
-            PsfParameter pp;
-            if (testpar == null)
-            {
-                return;
-            }
-            foreach (SongArea sa in testpar.blocks)
-            {
-                Console.WriteLine("Saved Block - ADDR: {0} SIZE: {1}", sa.addr, sa.size);
-            }
-            foreach (string sp in testpar.psfparams.Keys)
-            {
-                if(testpar.psfparams.TryGetValue(sp, out pp))
-                {
-                    Console.WriteLine("Name: {0} Number of Bytes: {1} Value: {2}", sp, pp.value.Length, BitConverter.ToString(pp.value));
-                    if (pp.value.Length == 4)
+                    drivers.TryAdd(testpar.drivername, testpar);
+                    //return;
+                    //Console.WriteLine("Game EXE Name: {0}", testpar.exename);
+                    //Console.WriteLine("Driver: {0}", testpar.drivername);
+                    //foreach (SongArea sa in testpar.blocks)
+                    //{
+                    //    Console.WriteLine("Saved Block - ADDR: {0} SIZE: {1}", sa.addr, sa.size);
+                    //}
+                    foreach (string sp in testpar.psfparams.Keys)
                     {
-                        
-                        Console.WriteLine("OFFSET VALUE: {0:X}", BitConverter.ToUInt32(pp.value) - testpar.offset);
-                    }
-                }
 
+                        if (testpar.psfparams.TryGetValue(sp, out pp))
+                        {
+                            parameters.TryAdd(sp, pp);
+                            
+                            //Console.WriteLine("Name: {0} Number of Bytes: {1} Value: {2}", sp, pp.value.Length, BitConverter.ToString(pp.value));
+                            //if (pp.value.Length == 4)
+                            //{
+
+                            //    Console.WriteLine("OFFSET VALUE: {0:X}", BitConverter.ToUInt32(pp.value) - testpar.offset);
+                            //}
+                        }
+                    }
+                    //Console.WriteLine("\n\n\n");
+
+                }
+                if (onefilebreak)
+                {
+                    return;
+                }
             }
-            
         }
         static string nullterm(string s, int index)
         {

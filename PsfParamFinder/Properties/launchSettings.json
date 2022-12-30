@@ -2,7 +2,7 @@
   "profiles": {
     "PsfParamFinder": {
       "commandName": "Project",
-      "commandLineArgs": "mini.minipsf minipsf.exe"
+      "commandLineArgs": "Z:\\!PSFDisc\\SNAKE\\NotDone"
     }
   }
 }
