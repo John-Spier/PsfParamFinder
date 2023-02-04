@@ -5,6 +5,9 @@ using System.IO;
 //using ComponentAce.Compression.Libs.zlib;
 using Ionic.Zlib;
 using Force.Crc32;
+
+
+//using System.Runtime.Serialization.Formatters.Binary;
 //use ipaddress fucntions to change endians?
 namespace PsfParamFinder
 {
@@ -67,68 +70,153 @@ namespace PsfParamFinder
         }
     }
 
+    [Serializable]
+    public struct ParamsV1
+    {
+        public short SeqNum;
+        public short Version;
+        public short MvolL;
+        public short MvolR;
+        public short VolL;
+        public short VolR;
+        public short RvolL;
+        public short RvolR;
+        public short RdepthL;
+        public short RdepthR;
+        public short Rdelay;
+        public short Rmode;
+        public short Rfeedback;
+        public int TickMode;
+        public char SeqFlags;
+        public char SeqType;
+    }
+
     class Program
     {
         static void Main(string[] args)
         {
+            ParamsV1 savepar_test = new ParamsV1();
+            savepar_test.SeqNum = 0;
+            savepar_test.Version = 1;
+            savepar_test.MvolL = 64;
+            savepar_test.MvolR = 64;
+            savepar_test.VolL = 64;
+            savepar_test.VolR = 64;
+            savepar_test.RvolL = 64;
+            savepar_test.RvolR = 64;
+            savepar_test.RdepthL = 64;
+            savepar_test.RdepthR = 64;
+            savepar_test.Rdelay = 64;
+            savepar_test.Rmode = 3;
+            savepar_test.Rfeedback = 64;
+            savepar_test.TickMode = 0x1000;
+            savepar_test.SeqFlags = (char)0x00;
+            savepar_test.SeqType = (char)0x00;
+
+            /*
+            savepar_test.SeqNum = 0x10FE;
+            savepar_test.Version = 0x11FF;
+            savepar_test.MvolL = 65;
+            savepar_test.MvolR = 64;
+            savepar_test.VolL = 66;
+            savepar_test.VolR = 67;
+            savepar_test.RvolL = 68;
+            savepar_test.RvolR = 69;
+            savepar_test.RdepthL = 63;
+            savepar_test.RdepthR = 62;
+            savepar_test.Rdelay = 61;
+            savepar_test.Rmode = 30;
+            savepar_test.Rfeedback = 6;
+            savepar_test.TickMode = 0x1001;
+            savepar_test.SeqFlags = (char)0xA;
+            savepar_test.SeqType = (char)0xB;
+            */
 
 
-            //if (args.Length > 1)
-            //{
-            //    byte[] exe = File.ReadAllBytes(args[1]);
-            //    for (int i = 0; i < 2048; i += 4)
-            //    {
-            //        if (BitConverter.ToUInt32(exe, i) != BitConverter.ToUInt32(mem.ram, i))
-            //        {
-            //            Console.WriteLine("Int32 0x{0:X}: {1:X8} {2:X8}", i, BitConverter.ToUInt32(exe, i), BitConverter.ToUInt32(mem.ram, i));
-            //        }
-            //    }
-            //    foreach (PsfFile se in mem.minipsfs)
-            //    {
-            //        Console.WriteLine("{0} Text Addr: {1:X8} Text Size: {2:X8} PC: {3:X8} SP: {4:X8} Start: {5:X8}",
-            //            se.filename,
-            //            BitConverter.ToUInt32(se.headersect, 24),
-            //            BitConverter.ToUInt32(se.headersect, 28),
-            //            BitConverter.ToUInt32(se.headersect, 16),
-            //            BitConverter.ToUInt32(se.headersect, 48),
-            //            se.start);
-            //    }
-            //}
+            FileStream spar = File.OpenWrite(args[0]);
+            //BinaryFormatter binform = new BinaryFormatter();
+            //binform.Serialize(spar, savepar_test);
+            BinaryWriter nopointer = new BinaryWriter(spar, System.Text.Encoding.UTF8);
+            nopointer.Write(savepar_test.SeqNum);
+            nopointer.Write(savepar_test.Version);
+            nopointer.Write(savepar_test.MvolL);
+            nopointer.Write(savepar_test.MvolR);
+            nopointer.Write(savepar_test.VolL);
+            nopointer.Write(savepar_test.VolR);
+            nopointer.Write(savepar_test.RvolL);
+            nopointer.Write(savepar_test.RvolR);
+            nopointer.Write(savepar_test.RdepthL);
+            nopointer.Write(savepar_test.RdepthR);
+            nopointer.Write(savepar_test.Rdelay);
+            nopointer.Write(savepar_test.Rmode);
+            nopointer.Write(savepar_test.Rfeedback);
+            nopointer.Write(savepar_test.TickMode);
+            nopointer.Write(savepar_test.SeqFlags);
+            nopointer.Write(savepar_test.SeqType);
+            nopointer.Close();
+            spar.Close();
+            return;
+
+
+
+
+
+
+        }
+
+        static void ParamsCatalog(string dir, bool allexe, StreamWriter outstream, bool drvout, bool paramout)
+        {
+            //StreamWriter con = new StreamWriter(outstream);
             Dictionary<string, PsfParameter> psfParameters = new Dictionary<string, PsfParameter>();
             Dictionary<string, InternalParams> psfDrivers = new Dictionary<string, InternalParams>();
             PsfParameter tp;
             InternalParams td;
-            foreach (string d in Directory.EnumerateDirectories(args[0]))
+            if (allexe)
             {
-                DirParams(d, "*.exe", true, psfParameters, psfDrivers);
+                DirParams(dir, "*.exe", false, psfParameters, psfDrivers);
             }
-
-            foreach (string k in psfParameters.Keys)
+            else
             {
-                if (psfParameters.TryGetValue(k, out tp))
+                foreach (string d in Directory.EnumerateDirectories(dir))
                 {
-                    Console.WriteLine("{0} ({1})", k, tp.value.Length);
+                    DirParams(d, "*.exe", true, psfParameters, psfDrivers);
                 }
-                
             }
-            Console.WriteLine("\n\n\n");
-            foreach (string l in psfDrivers.Keys)
+            if (paramout)
             {
-                if (psfDrivers.TryGetValue(l, out td))
+                foreach (string k in psfParameters.Keys)
                 {
-                    Console.WriteLine(l);
-                    foreach (string m in td.psfparams.Keys)
+                    if (psfParameters.TryGetValue(k, out tp))
                     {
-                        if (psfParameters.TryGetValue(m, out tp))
-                        {
-                            Console.WriteLine("{0} ({1})", m, tp.value.Length);
-                        }
-
+                        outstream.WriteLine("{0} ({1})", k, tp.value.Length);
                     }
-                }
-                Console.WriteLine("\n\n\n");
-            }
 
+                }
+            }
+            if (drvout)
+            {
+                Console.WriteLine("\n\n\n=====DRIVERS=====\n\n\n");
+
+
+                foreach (string l in psfDrivers.Keys)
+                {
+                    if (psfDrivers.TryGetValue(l, out td))
+                    {
+                        Console.WriteLine(l);
+                        Console.WriteLine(td.drivername);
+                        foreach (string m in td.psfparams.Keys)
+                        {
+                            if (psfParameters.TryGetValue(m, out tp))
+                            {
+                                Console.WriteLine("{0} ({1})", m, tp.value.Length);
+                            }
+
+                        }
+                    }
+                    Console.WriteLine("\n\n\n");
+
+                }
+            }
         }
 
         static void DirParams(string d, string pattern, bool onefilebreak, Dictionary<string, PsfParameter> parameters, Dictionary<string, InternalParams> drivers)
@@ -141,32 +229,20 @@ namespace PsfParamFinder
                 MemoryStream fstream = new MemoryStream(mem.ram);
                 InternalParams testpar = binvals(fstream);
                 PsfParameter pp;
+                string drvname;
                 if (testpar != null)
                 {
-                    drivers.TryAdd(testpar.drivername, testpar);
-                    //return;
-                    //Console.WriteLine("Game EXE Name: {0}", testpar.exename);
-                    //Console.WriteLine("Driver: {0}", testpar.drivername);
-                    //foreach (SongArea sa in testpar.blocks)
-                    //{
-                    //    Console.WriteLine("Saved Block - ADDR: {0} SIZE: {1}", sa.addr, sa.size);
-                    //}
+                    drvname = testpar.drivername;
+                    testpar.drivername = f;
+                    drivers.TryAdd(drvname, testpar);
                     foreach (string sp in testpar.psfparams.Keys)
                     {
 
                         if (testpar.psfparams.TryGetValue(sp, out pp))
                         {
                             parameters.TryAdd(sp, pp);
-                            
-                            //Console.WriteLine("Name: {0} Number of Bytes: {1} Value: {2}", sp, pp.value.Length, BitConverter.ToString(pp.value));
-                            //if (pp.value.Length == 4)
-                            //{
-
-                            //    Console.WriteLine("OFFSET VALUE: {0:X}", BitConverter.ToUInt32(pp.value) - testpar.offset);
-                            //}
                         }
                     }
-                    //Console.WriteLine("\n\n\n");
 
                 }
                 if (onefilebreak)
@@ -215,8 +291,8 @@ namespace PsfParamFinder
                         }
                         catch (Exception tx)
                         {
-                            Console.WriteLine("Exception: {0}", tx.Message);
-                            Console.WriteLine("{0} was not a valid tag line", lib);
+                            Console.Error.WriteLine("Exception: {0}", tx.Message);
+                            Console.Error.WriteLine("{0} was not a valid tag line", lib);
                         }
 
                     }
@@ -232,15 +308,15 @@ namespace PsfParamFinder
                     }
                     catch (Exception lx)
                     {
-                        Console.WriteLine("{0} was not a valid library", ls);
-                        Console.WriteLine("Exception: {0}", lx.Message);
+                        Console.Error.WriteLine("{0} was not a valid library", ls);
+                        Console.Error.WriteLine("Exception: {0}", lx.Message);
                     }
                 }
                 return libs.ToArray();
             }
             catch (Exception mx)
             {
-                Console.WriteLine("Tag Exception: {0}", mx.Message);
+                Console.Error.WriteLine("Tag Exception: {0}", mx.Message);
             }
             return new string[0];
         }
@@ -273,7 +349,7 @@ namespace PsfParamFinder
                     fs.Dispose();
                     break;
                 default:
-                    Console.WriteLine("{0} is not a readable PSF or EXE file!", filename);
+                    Console.Error.WriteLine("{0} is not a readable PSF or EXE file!", filename);
                     break;
                     
             }
@@ -355,7 +431,7 @@ namespace PsfParamFinder
                 tempram = binary.ReadBytes(psize);
                 if (Crc32Algorithm.Compute(tempram) != info.crc)
                 {
-                    Console.WriteLine("{0}: Wrong CRC!", fn);
+                    Console.Error.WriteLine("{0}: Wrong CRC!", fn);
                 }
                 info.filename = fn;
                 tab.minipsfs.Add(info);
@@ -365,7 +441,7 @@ namespace PsfParamFinder
             }
             catch (Exception px)
             {
-                Console.WriteLine("File {0} exception: {1}", fn, px.Message);
+                Console.Error.WriteLine("File {0} exception: {1}", fn, px.Message);
 
             }
             return false;
@@ -396,7 +472,7 @@ namespace PsfParamFinder
             tempram = f.ReadBytes(psize);
             if (Crc32Algorithm.Compute(tempram) != info.crc)
             {
-                Console.WriteLine("Wrong CRC!");
+                Console.Error.WriteLine("Wrong CRC!");
             }
             info.segment = BitConverter.ToUInt32(info.headersect, 24) / 0x20000000;
             info.start = 2048;
@@ -479,7 +555,7 @@ namespace PsfParamFinder
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                Console.Error.WriteLine(ex.Message);
             }
             return null;
         }
