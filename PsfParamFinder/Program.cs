@@ -5,13 +5,14 @@ using System.IO;
 //using ComponentAce.Compression.Libs.zlib;
 using Ionic.Zlib;
 using Force.Crc32;
+using System.Runtime.InteropServices;
 
 
 //using System.Runtime.Serialization.Formatters.Binary;
 //use ipaddress fucntions to change endians?
 namespace PsfParamFinder
 {
-    public enum PsfTypes
+	public enum PsfTypes
     {
         EXE,
         PSF,
@@ -56,6 +57,13 @@ namespace PsfParamFinder
         public uint size;
     }
 
+    public struct PsfSection
+    {
+        public uint loc;
+        public uint layer;
+        public bool start;
+    }
+
     [Serializable]
     public struct PsfParameter
     {
@@ -95,74 +103,132 @@ namespace PsfParamFinder
     {
         static void Main(string[] args)
         {
-            ParamsV1 savepar_test = new ParamsV1();
-            savepar_test.SeqNum = 0;
-            savepar_test.Version = 1;
-            savepar_test.MvolL = 64;
-            savepar_test.MvolR = 64;
-            savepar_test.VolL = 64;
-            savepar_test.VolR = 64;
-            savepar_test.RvolL = 64;
-            savepar_test.RvolR = 64;
-            savepar_test.RdepthL = 64;
-            savepar_test.RdepthR = 64;
-            savepar_test.Rdelay = 64;
-            savepar_test.Rmode = 3;
-            savepar_test.Rfeedback = 64;
-            savepar_test.TickMode = 0x1000;
-            savepar_test.SeqFlags = (char)0x00;
-            savepar_test.SeqType = (char)0x00;
+            //need to add list of commands
+            //ParamsV1 savepar_test = new ParamsV1();
+            PsfTable table = LoadFile("211.exe");
+            PsfFile psf = new PsfFile();
+            psf.filename = "Overlay 1";
+            psf.start = 10000;
+            psf.end = 100010;
+            table.minipsfs.Add(psf);
 
-            /*
-            savepar_test.SeqNum = 0x10FE;
-            savepar_test.Version = 0x11FF;
-            savepar_test.MvolL = 65;
-            savepar_test.MvolR = 64;
-            savepar_test.VolL = 66;
-            savepar_test.VolR = 67;
-            savepar_test.RvolL = 68;
-            savepar_test.RvolR = 69;
-            savepar_test.RdepthL = 63;
-            savepar_test.RdepthR = 62;
-            savepar_test.Rdelay = 61;
-            savepar_test.Rmode = 30;
-            savepar_test.Rfeedback = 6;
-            savepar_test.TickMode = 0x1001;
-            savepar_test.SeqFlags = (char)0xA;
-            savepar_test.SeqType = (char)0xB;
-            */
+            psf = new PsfFile();
+			psf.filename = "Overlay 2";
+			psf.start = 100000;
+			psf.end = 150000;
+			table.minipsfs.Add(psf);
 
-
-            FileStream spar = File.OpenWrite(args[0]);
-            //BinaryFormatter binform = new BinaryFormatter();
-            //binform.Serialize(spar, savepar_test);
-            BinaryWriter nopointer = new BinaryWriter(spar, System.Text.Encoding.UTF8);
-            nopointer.Write(savepar_test.SeqNum);
-            nopointer.Write(savepar_test.Version);
-            nopointer.Write(savepar_test.MvolL);
-            nopointer.Write(savepar_test.MvolR);
-            nopointer.Write(savepar_test.VolL);
-            nopointer.Write(savepar_test.VolR);
-            nopointer.Write(savepar_test.RvolL);
-            nopointer.Write(savepar_test.RvolR);
-            nopointer.Write(savepar_test.RdepthL);
-            nopointer.Write(savepar_test.RdepthR);
-            nopointer.Write(savepar_test.Rdelay);
-            nopointer.Write(savepar_test.Rmode);
-            nopointer.Write(savepar_test.Rfeedback);
-            nopointer.Write(savepar_test.TickMode);
-            nopointer.Write(savepar_test.SeqFlags);
-            nopointer.Write(savepar_test.SeqType);
-            nopointer.Close();
-            spar.Close();
-            return;
-
-
-
-
-
+            FindChanges(table, 9990, 10000);
+			return;
 
         }
+
+        static void FindChanges(PsfTable table, uint start, uint end)
+        {
+
+            SortedDictionary<uint, bool> layers = new SortedDictionary<uint, bool>();
+            PsfSection[] lChanges = new PsfSection[table.minipsfs.Count * 2];
+            PsfSection section = new PsfSection();
+            int j = 0;
+            int hLayer = -1;
+
+            for (uint i = 0; i < table.minipsfs.Count; i++)
+            {
+                section.layer = i;
+                section.start = true;
+                section.loc = table.minipsfs[(int)i].start;
+                lChanges[j] = section;
+                j++;
+                section.start = false;
+                section.loc = table.minipsfs[(int)i].end;
+                lChanges[j] = section;
+                j++;
+
+
+                layers.Add(i, false);
+            }
+
+            Array.Sort(lChanges, (x, y) => x.loc.CompareTo(y.loc));
+            j = 0;
+
+
+            foreach(PsfSection psf in lChanges)
+            {
+                j++;
+                layers[psf.layer] = psf.start; 
+                if (psf.loc >= start && psf.loc <= end)
+                {
+                    hLayer = -1;
+                    for (int i = 0; i < layers.Count; i++)
+                    {
+                        if (layers[(uint)i] == true)
+                        {
+                            if (i > hLayer)
+                            {
+                                hLayer = i;
+                            }
+                        }
+                    }
+                    table.minipsfs[hLayer].modified = true;
+				}
+            }
+
+			return;
+        }
+
+        static ParamsV1 DefaultParamsV1(ParamsV1 savepar_test)
+        {
+			savepar_test.SeqNum = 0;
+			savepar_test.Version = 1;
+			savepar_test.MvolL = 64;
+			savepar_test.MvolR = 64;
+			savepar_test.VolL = 64;
+			savepar_test.VolR = 64;
+			savepar_test.RvolL = 64;
+			savepar_test.RvolR = 64;
+			savepar_test.RdepthL = 64;
+			savepar_test.RdepthR = 64;
+			savepar_test.Rdelay = 64;
+			savepar_test.Rmode = 3;
+			savepar_test.Rfeedback = 64;
+			savepar_test.TickMode = 0x1000;
+			savepar_test.SeqFlags = (char)0x00;
+			savepar_test.SeqType = (char)0x00;
+            return savepar_test;
+		}
+
+        static bool SaveParamsV1(string arg, ParamsV1 savepar_test)
+        {
+            try
+            {
+                FileStream spar = File.OpenWrite(arg);
+                BinaryWriter nopointer = new BinaryWriter(spar, System.Text.Encoding.UTF8);
+                nopointer.Write(savepar_test.SeqNum);
+                nopointer.Write(savepar_test.Version);
+                nopointer.Write(savepar_test.MvolL);
+                nopointer.Write(savepar_test.MvolR);
+                nopointer.Write(savepar_test.VolL);
+                nopointer.Write(savepar_test.VolR);
+                nopointer.Write(savepar_test.RvolL);
+                nopointer.Write(savepar_test.RvolR);
+                nopointer.Write(savepar_test.RdepthL);
+                nopointer.Write(savepar_test.RdepthR);
+                nopointer.Write(savepar_test.Rdelay);
+                nopointer.Write(savepar_test.Rmode);
+                nopointer.Write(savepar_test.Rfeedback);
+                nopointer.Write(savepar_test.TickMode);
+                nopointer.Write(savepar_test.SeqFlags);
+                nopointer.Write(savepar_test.SeqType);
+                nopointer.Close();
+                spar.Close();
+                return true;
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine("{0} Parameter Write Error: {1}", arg, e.Message);
+            }
+			return false;
+		}
 
         static void ParamsCatalog(string dir, bool allexe, StreamWriter outstream, bool drvout, bool paramout)
         {
@@ -195,25 +261,25 @@ namespace PsfParamFinder
             }
             if (drvout)
             {
-                Console.WriteLine("\n\n\n=====DRIVERS=====\n\n\n");
+                outstream.WriteLine("\n\n\n=====DRIVERS=====\n\n\n");
 
 
                 foreach (string l in psfDrivers.Keys)
                 {
                     if (psfDrivers.TryGetValue(l, out td))
                     {
-                        Console.WriteLine(l);
-                        Console.WriteLine(td.drivername);
+                        outstream.WriteLine(l);
+                        outstream.WriteLine(td.drivername);
                         foreach (string m in td.psfparams.Keys)
                         {
                             if (psfParameters.TryGetValue(m, out tp))
                             {
-                                Console.WriteLine("{0} ({1})", m, tp.value.Length);
+                                outstream.WriteLine("{0} ({1})", m, tp.value.Length);
                             }
 
                         }
                     }
-                    Console.WriteLine("\n\n\n");
+                    outstream.WriteLine("\n\n\n");
 
                 }
             }
@@ -346,8 +412,18 @@ namespace PsfParamFinder
                     break;
                 case 0x582D5350: //PSX EXE
                     pt = LoadExe(br);
+                    pt.minipsfs = new List<PsfFile>();
                     fs.Dispose();
-                    break;
+                    PsfFile info = new PsfFile();
+                    info.filename = filename;
+                    info.headersect = new byte[2048];
+                    Array.Copy(pt.ram, info.headersect, 2048);
+					info.segment = BitConverter.ToUInt32(info.headersect, 24) / 0x20000000;
+					info.start = 2048;
+                    info.end = (uint)pt.ram.Length;
+                    info.modified = false;
+                    pt.minipsfs.Add(info);
+					break;
                 default:
                     Console.Error.WriteLine("{0} is not a readable PSF or EXE file!", filename);
                     break;
@@ -435,8 +511,10 @@ namespace PsfParamFinder
                 }
                 info.filename = fn;
                 tab.minipsfs.Add(info);
+                zlib.Close();
                 binary.Dispose();
                 file.Dispose();
+                zlib.Dispose();
                 return true;
             }
             catch (Exception px)
@@ -447,6 +525,126 @@ namespace PsfParamFinder
             return false;
         }
 
+        static bool SaveMiniPSF(string[] fn, PsfTable psfTable)
+        {
+            //Add way to expand the minipsf and set all psflibs to unchanged
+            //never mind, use ftype to do this
+            return true;
+        }
+
+        static bool SavePsfFile(string fn, byte[] ram, PsfFile psfFile)
+        {
+            try
+            {
+                if (psfFile.reserved_area == null)
+                {
+                    psfFile.reserved_area = new byte[0];
+                }
+				if (psfFile.tags == null)
+				{
+					psfFile.tags = new byte[0];
+				}
+				BinaryWriter bw = new BinaryWriter(new FileStream(fn, FileMode.Create));
+                bw.Write(0x01465350); //PSF signature
+                bw.Write(psfFile.reserved_area.Length);
+
+                MemoryStream mem = new MemoryStream();
+				ZlibStream zlib = new ZlibStream(mem, CompressionMode.Compress, CompressionLevel.Level9, true);
+				zlib.Write(psfFile.headersect);
+                uint unc_size = psfFile.end - psfFile.start;
+                zlib.Write(ram, (int)psfFile.start, (int)unc_size);
+                //zlib.Write(ram);
+                zlib.Flush();
+                zlib.Close(); //Must use this method even though Micrsoft says it's deprecated
+                byte[] tempram = mem.ToArray();
+
+				bw.Write(tempram.Length);
+				bw.Write(Crc32Algorithm.Compute(tempram));
+                bw.Write(psfFile.reserved_area);
+                bw.Write(tempram);
+
+                zlib.Dispose();
+                mem.Dispose();
+
+                //int csize = (int)bw.BaseStream.Length - (psfFile.reserved_area.Length + 16);
+                bw.Write(psfFile.tags);
+                bw.Flush();
+                bw.Dispose();
+
+                return true;
+
+			}
+            catch (Exception bx)
+            {
+                Console.Error.WriteLine("File Exception: {0}", bx.Message);
+                return false;
+            }
+        }
+
+        static string FindName(PsfFile psfFile)
+        {
+            try
+            {
+                if (psfFile.tags == null || psfFile.tags.Length < 5)
+                {
+                    return Path.GetFileNameWithoutExtension(psfFile.filename);
+                }
+                BinaryReader br = new BinaryReader(new MemoryStream(psfFile.tags));
+                StreamReader sr = new StreamReader(br.BaseStream);
+                uint tagsig = br.ReadUInt32();
+                string lib = "";
+                string fname = null;
+                if (tagsig == 0x4741545B && br.ReadByte() == 0x5D)
+                {
+                    while (sr.Peek() >= 0)
+                    {
+                        try
+                        {
+                            lib = sr.ReadLine();
+                            if (lib.ToLowerInvariant().StartsWith("title"))
+                            {
+                                fname = (lib.Split('=', StringSplitOptions.RemoveEmptyEntries)[1]);
+                            }
+                        }
+                        catch (Exception tx)
+                        {
+                            Console.Error.WriteLine("Exception: {0}", tx.Message);
+                            Console.Error.WriteLine("{0} was not a valid tag line", lib);
+                        }
+
+                    }
+                }
+                if (fname == null || fname.Length == 0)
+                {
+                    return Path.GetFileNameWithoutExtension(psfFile.filename); //if both are null returns null
+                }
+                else
+                {
+                    return fname;
+                }
+            } 
+            catch (Exception cx)
+            {
+                Console.Error.WriteLine("Tag Field Exception: {0}", cx.Message);
+                return null;
+            }
+        }
+
+        static bool SaveEXEFile(string fn, PsfTable psfTable)
+        {
+            try
+            {
+                BinaryWriter binaryWriter = new BinaryWriter(File.OpenWrite(fn));
+                binaryWriter.Write(psfTable.ram);
+                binaryWriter.Close();
+                return true;
+            }
+            catch (Exception vx)
+            {
+                Console.Error.WriteLine("EXE Save Error {0} for file {1}", vx.Message, fn);
+            }
+            return false;
+        }
         static PsfTable LoadPsf(BinaryReader f)
         {
             PsfTable ptab = new PsfTable();
@@ -483,7 +681,6 @@ namespace PsfParamFinder
 
         static PsfTable LoadExe(BinaryReader b)
         {
-            
             b.BaseStream.Seek(0, SeekOrigin.Begin);
             PsfTable psf = new PsfTable();
             psf.ftype = PsfTypes.EXE;
