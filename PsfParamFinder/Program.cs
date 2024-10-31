@@ -138,54 +138,61 @@ namespace PsfParamFinder
         public int sepstart;
         public int sepend;
     }
+    [Serializable]
+    public struct VabInfo
+    {
+        public int vhstart;
+        public int vhend;
+        public int vbstart;
+        public int vbend;
+        public decimal vbprob;
+        public bool vb_from_info;
+        public bool vb_not_found;
+    }
+    [Serializable]
+	public struct VhInfo
+    {
+        public int vh;
+        public short vagnum;
+        public int[] vags;
+        public int vh_size;
+        public int vb_size;
+        public int vag_size;
+    }
 
 	[Serializable]
 	public struct SoundInfo
 	{
         public SeqInfo[] seq;
         public SepInfo[] sep;
-
+        public VabInfo[] vab;
         public int sep_main_track;
-
-		public int vhstart;
-		public int vhend;
-		public int vbstart;
-		public int vbend;
-		public double vbprob;
-		public bool vb_from_info;
-		public bool vb_not_found;
 	}
 
 	class Program
     {
         static void Main(string[] args)
         {
-            //need to add list of commands
-            //ParamsV1 savepar_test = new ParamsV1();
             PsfTable table = LoadFile("105.exe");
-
-            //BinaryReader sepbr = new(new FileStream("105.sep", FileMode.Open));
-            //byte[] sep = sepbr.ReadBytes((int)sepbr.BaseStream.Length);
-            //SeqInfo[] songs = CountSepTracks(sep, 0);
-			//int s = FindFile(table.ram, "\0\awwwwwwwwwwwwww", 0);
-			//int s = FindFile(table.ram, "\x00FF/\0", 0x95000);
             SaveSoundFiles(table);
 			return;
 
         }
         //Multiple SEQs fix: find all unique SEQ files.
         //For non-unique SEQs, they will be distrbuted to the PSFs which have no unique SEQs of their own.
-        static void SaveSoundFiles(PsfTable table, bool checkall = true, bool verbose = false, 
-            bool checkbrute = false, bool prioritize_spec = true, TextWriter con = null)
+        static SoundInfo SaveSoundFiles(PsfTable table, bool checkall = true, bool verbose = false, bool checkbrute = false, 
+            bool prioritize_spec = true, bool allow_vabp = false, bool allow_seqp = true, bool seq_vh_search_all = true, 
+            decimal vb_correct_needed = (decimal)1, bool check_sample_ends = false, bool use_probability = false, 
+            TextWriter con = null)
         {
             
             MemoryStream rampar = new(table.ram);
-            InternalParams ip = binvals(rampar);
+            InternalParams ip = Binvals(rampar);
             SoundInfo si = new();
             
             int seqsearch = -4;
 
-            int vabsize, vbsize, vhsize, vagsize, vagnum;
+            //int vabsize, vbsize, vhsize, vagsize, vagnum;
             List<int> clist = new();
             if (con == null)
             {
@@ -212,10 +219,13 @@ namespace PsfParamFinder
 
             List<int> plist = clist.Distinct().ToList();
 			int[] pcandidates = plist.ToArray();
+            int param_num = pcandidates.Length;
 			List<SeqInfo> seqs = new();
 			List<SepInfo> seps = new();
 
             bool seqp = false;
+
+            List<int> seqfiles = new();
 
 			while (seqsearch != -1)
 			{
@@ -233,196 +243,332 @@ namespace PsfParamFinder
                 {
 					seqInfo.seqstart = FindFile(table.ram, "pQES", seqsearch + 4, pcandidates);
 				}
-
-
-				if (BitConverter.ToInt32(table.ram, seqInfo.seqstart + 4) == 0x01000000)
+                if (seqInfo.seqstart > 0 && !seqfiles.Contains(seqInfo.seqstart))
                 {
-                    seqInfo.is_sep = false;
-                    seqInfo.seqend = FindFile(table.ram, "\x00FF/\0", seqInfo.seqstart) + 3;
+                    seqfiles.Add(seqInfo.seqstart);
 
-                    if (!prioritize_spec || seqInfo.seqend == -1)
-                    {
-                        int seqend2;
-                        seqend2 = FindFile(table.ram, "\x00FF\0\0", seqInfo.seqstart) + 3;
-                        if (seqend2 > 0 && seqend2 < seqInfo.seqend)
-                        {
-                            if (verbose)
-                            {
-                                con.WriteLine("Warning: alternate sequence end detected before normal sequence end ({0}/{1})", seqend2, seqInfo.seqend);
-                            }
-                            seqInfo.seqend = seqend2;
-                        }
+					if (BitConverter.ToInt32(table.ram, seqInfo.seqstart + 4) == 0x01000000)
+					{
+						seqInfo.is_sep = false;
+						seqInfo.seqend = FindFile(table.ram, "\x00FF/\0", seqInfo.seqstart) + 3;
 
-                        seqend2 = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", seqInfo.seqstart) + 16;
-                        if (seqend2 > 0 && seqend2 < seqInfo.seqend)
-                        {
-                            if (verbose)
-                            {
-                                con.WriteLine("Warning: alternate sequence end 2 detected before normal sequence end ({0}/{1})", seqend2, seqInfo.seqend);
-                            }
-                            seqInfo.seqend = seqend2;
-                        }
-                    }
-                    if (seqInfo.seqend > -1)
-                    {
-                        seqs.Add(seqInfo);
-                    }
-                }
-                else
-                {
-                    int oldcount = seqs.Count;
-                    seqs.AddRange(CountSepTracks(table.ram, seqInfo.seqstart, prioritize_spec, seps.Count));
-                    if (seqs.Count > oldcount)
-                    {
-						sepInfo.sepstart = seqInfo.seqstart;
-						sepInfo.sepend = seqs.Last().seqend;
-						seps.Add(sepInfo);
+						if (!prioritize_spec || seqInfo.seqend == -1)
+						{
+							int seqend2;
+							seqend2 = FindFile(table.ram, "\x00FF\0\0", seqInfo.seqstart) + 3;
+							if (seqend2 > 0 && seqend2 < seqInfo.seqend)
+							{
+								if (verbose)
+								{
+									con.WriteLine("Warning: alternate sequence end detected before normal sequence end ({0}/{1})", seqend2, seqInfo.seqend);
+								}
+								seqInfo.seqend = seqend2;
+							}
+
+							seqend2 = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", seqInfo.seqstart) + 16;
+							if (seqend2 > 0 && seqend2 < seqInfo.seqend)
+							{
+								if (verbose)
+								{
+									con.WriteLine("Warning: alternate sequence end 2 detected before normal sequence end ({0}/{1})", seqend2, seqInfo.seqend);
+								}
+								seqInfo.seqend = seqend2;
+							}
+						}
+						if (seqInfo.seqend > -1)
+						{
+							seqs.Add(seqInfo);
+						}
 					}
+					else
+					{
+						int oldcount = seqs.Count;
+						seqs.AddRange(CountSepTracks(table.ram, seqInfo.seqstart, prioritize_spec, seps.Count));
+						if (seqs.Count > oldcount)
+						{
+							sepInfo.sepstart = seqInfo.seqstart;
+							sepInfo.sepend = seqs.Last().seqend;
+							seps.Add(sepInfo);
+						}
 
-                }
-                if (pcandidates.Length > 0)
-                {
-                    plist.Remove(pcandidates[0]);
-                    pcandidates = plist.ToArray();
-                }
-                else
-                {
-                    seqsearch = seqInfo.seqstart;
-                    if (!seqp && seqsearch == -1)
-                    {
-                        seqp = true;
-                    }
-                }
-            }
+					}
+				}
 
-
-
-			si.vhstart = FindFile(table.ram, "pBAV", 0, pcandidates);
-            vabsize = BitConverter.ToInt32(table.ram, si.vhstart + 12);
-            vhsize = 0x20 + 0x800 + 0x200 + (BitConverter.ToInt16(table.ram, si.vhstart + 18) * 0x200);
-            vbsize = vabsize - vhsize;
-            si.vhend = si.vhstart + vhsize;
-
-            vagnum = BitConverter.ToInt16(table.ram, si.vhstart + 22);
-            vagsize = 0;
-            int[] vags = new int[vagnum];
-            for (int i = 0; i < vagnum; i++)
-            {
-                vags[i] = BitConverter.ToInt16(table.ram, si.vhstart + vhsize - 0x1FE + (i * 2)) * 8;
-                vagsize += vags[i];
+				if (pcandidates.Length > 0)
+				{
+					plist.Remove(pcandidates[0]);
+					pcandidates = plist.ToArray();
+				}
+				else
+				{
+					if (seq_vh_search_all)
+					{
+						seqsearch = seqInfo.seqstart;
+					}
+					else
+					{
+						seqsearch = -1;
+					}
+					if (allow_seqp && !seqp && seqsearch == -1)
+					{
+						seqp = true;
+						plist = clist.Distinct().ToList();
+						pcandidates = plist.ToArray();
+					}
+				}
 			}
 
-			if (vagsize != vbsize)
+            si.seq = seqs.ToArray();
+            si.sep = seps.ToArray();
+
+
+
+			plist = clist.Distinct().ToList();
+			pcandidates = plist.ToArray();
+            List<int> vhfiles = new();
+            List<VhInfo> vagfiles = new();
+            int maxvag = 0;
+            int vhsearch = -4;
+            bool vabp = false;
+            bool strict_size = prioritize_spec;
+
+            while (vhsearch != -1)
             {
-                if (verbose)
+                VhInfo vh = new();
+                if (vabp)
                 {
-                    con.WriteLine("WARNING: VH header total sample size/VB file size mismatch ({0}/{1})", vagsize, vbsize);
-                }
-            }
+					vh.vh = FindFile(table.ram, "VABp", vhsearch + 4, pcandidates);
+                    if (verbose && vh.vh != -1)
+                    {
+                        con.WriteLine("Warning: VABp signature detected at {0}", vh.vh);
+                    }
+				}
+                else
+                {
+					vh.vh = FindFile(table.ram, "pBAV", vhsearch + 4, pcandidates);
+				}
+				if (vh.vh > 0 && !vhfiles.Contains(vh.vh))
+                {
+					vh.vh_size = 0x20 + 0x800 + 0x200 + (BitConverter.ToInt16(table.ram, vh.vh + 18) * 0x200);
+                    vh.vb_size = BitConverter.ToInt32(table.ram, vh.vh + 12) - vh.vh_size;
+					vh.vagnum = BitConverter.ToInt16(table.ram, vh.vh + 22);
+
+					vh.vags = new int[vh.vagnum];
+					for (int i = 0; i < vh.vagnum; i++)
+					{
+						vh.vags[i] = BitConverter.ToUInt16(table.ram, vh.vh + vh.vh_size - 0x1FE + (i * 2)) * 8;
+						vh.vag_size += vh.vags[i];
+					}
+                    if (!strict_size || (vh.vb_size == vh.vag_size))
+                    {
+                        if (verbose && vh.vag_size != vh.vb_size)
+                        {
+							con.WriteLine("WARNING: VH header total sample size/VB file size mismatch ({0}/{1})", vh.vag_size, vh.vb_size);
+						}
+						if (vh.vagnum > maxvag)
+						{
+							maxvag = vh.vagnum;
+						}
+						vhfiles.Add(vh.vh);
+                        vagfiles.Add(vh);
+					}
+
+				}
+				if (pcandidates.Length > 0)
+				{
+					plist.Remove(pcandidates[0]);
+					pcandidates = plist.ToArray();
+				}
+				else
+                {
+                    if (seq_vh_search_all)
+                    {
+						vhsearch = vh.vh;
+					}
+                    else
+                    {
+                        vhsearch = -1;
+                    }
+					if (allow_vabp && !vabp && vhsearch == -1)
+					{
+						vabp = true;
+						plist = clist.Distinct().ToList();
+						pcandidates = plist.ToArray();
+					}
+                    if (strict_size && vhsearch == -1 && vagfiles.Count == 0)
+                    {
+                        strict_size = false;
+						plist = clist.Distinct().ToList();
+						pcandidates = plist.ToArray();
+					}
+				}
+			}
 
 			if (checkall && !checkbrute)
-            {
-				List<int> list = new List<int>();
+			{
+				List<int> list = new();
 				int searchloc = -16;
-                do
-                {
-                    searchloc = FindFile(table.ram, "\0\awwwwwwwwwwwwww", searchloc + 16);
-                    list.Add(searchloc);
-                } while (searchloc >= 0);
+				do
+				{
+					searchloc = FindFile(table.ram, "\0\awwwwwwwwwwwwww", searchloc + 16);
+					list.Add(searchloc);
+				} while (searchloc >= 0);
 
 				searchloc = -16;
-                do
-                {
-                    searchloc = FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", searchloc + 16);
-                    list.Add(searchloc);
-                } while (searchloc >= 0);
+				do
+				{
+					searchloc = FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", searchloc + 16);
+					list.Add(searchloc);
+				} while (searchloc >= 0);
 
 
 				foreach (int s in list)
-                {
-                    int rloc = s;
-                    for (int i = 0; i < vagnum; i++)
-                    {
-                        if (rloc > 16)
-                        {
-                            rloc = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", rloc - 16, null, true);
-                            clist.Add(rloc);
-                        }
-                    }
-                }
+				{
+					int rloc = s;
+					for (int i = 0; i < maxvag; i++)
+					{
+						if (rloc > 16)
+						{
+							rloc = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", rloc - 16, null, true);
+							clist.Add(rloc);
+						}
+					}
+				}
 			}
-            if (checkbrute)
-            {
-                clist.Clear();
-                int rrloc = -16;
-                do
-                {
-                    rrloc = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", rrloc + 16);
-                    clist.Add(rrloc);
-                } while (rrloc >= 0);
+			if (checkbrute)
+			{
+				clist.Clear();
+				int rrloc = -16;
+				do
+				{
+					rrloc = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", rrloc + 16);
+					clist.Add(rrloc);
+                    if (verbose && clist.Count % 1000 == 0)
+                    {
+                        con.WriteLine("{0} potential VBs found by location {1}/{2}, continuing to check...", clist.Count, rrloc, table.ram.Length);
+                    }
+				} while (rrloc >= 0);
 
 			}
 			int[] candidates = clist.Distinct().ToArray();
-            if (!checkbrute)
+            if (verbose)
             {
+                con.WriteLine("{0} total VB candidates found", candidates.Length);
+            }
+			if (!checkbrute)
+			{
 				for (int i = 0; i < candidates.Length; i++)
 				{
 					candidates[i] = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", candidates[i]);
 				}
 			}
 
-
-
-
-			//List<int> ints = new List<int>();
-            int correct;
-            int guess = 0;
-            int best = -1;
-            int prev_vag = 0;
-            int next_vag = 0;
-
-            for (int j = 0; j < candidates.Length; j++)
+            List<VabInfo> vi = new();
+            foreach (VhInfo k in vagfiles)
             {
-                if (candidates[j] > 0)
+                int correct;
+                int guess = 0;
+                int best = -1;
+                int prev_vag;
+                int next_vag;
+				VabInfo vab = new();
+				for (int j = 0; j < candidates.Length; j++)
                 {
-                    correct = 0;
-                    prev_vag = candidates[j];
-                    for (int i = 0; i < vagnum; i++)
+                    if (verbose && j > 0 && j % 1000 == 0)
                     {
-                        next_vag = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", prev_vag + 16);
-                        if (next_vag - prev_vag == vags[i])
+                        if (check_sample_ends)
                         {
-                            correct++;
-                        }
-                        if (i == vagnum - 1) //do this every time? too slow not worth it
+							con.WriteLine("Checking VB candidate {0}, best candidate has {1} correct sample starts/ends out of {2}", j, best, k.vagnum * 2);
+						}
+                        else
                         {
-                            if (FindFile(table.ram, "\0\awwwwwwwwwwwwww", prev_vag + 16) - prev_vag == vags[i] ||
-							FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", prev_vag + 16) - prev_vag == vags[i] ||
-							table.ram[prev_vag + (vags[i] - 15)] == 3)
+							con.WriteLine("Checking VB candidate {0}, best candidate has {1} correct samples out of {2}", j, best, k.vagnum);
+						}
+					}
+                    if (candidates[j] > 0)
+                    {
+                        correct = 0;
+                        prev_vag = candidates[j];
+                        for (int i = 0; i < k.vagnum; i++) 
+                        {
+                            next_vag = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", prev_vag + 16);
+                            if (next_vag - prev_vag == k.vags[i])
                             {
-								correct++;
-							}
+                                correct++;
+                            }
+                            if (check_sample_ends || i == k.vagnum - 1) //do this every time? too slow not worth it
+                            {
+                                if (table.ram[prev_vag + (k.vags[i] - 15)] == 3 ||
+                                FindFile(table.ram, "\0\awwwwwwwwwwwwww", prev_vag + 16) - prev_vag == k.vags[i] ||
+                                FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", prev_vag + 16) - prev_vag == k.vags[i])
+                                {
+                                    correct++;
+                                }
+                            }
+                            prev_vag = next_vag;
                         }
-                        prev_vag = next_vag;
-                    }
-                    //ints.Add(correct);
-                    if (correct > best)
-                    {
-                        best = correct;
-                        guess = j;
+                        //ints.Add(correct);
+                        if (correct > best)
+                        {
+                            best = correct;
+                            guess = j;
+                        }
                     }
                 }
-            }
+                if (guess <= param_num)
+                {
+                    vab.vb_from_info = true;
+                }
+                else
+                {
+                    vab.vb_from_info = false;
+                }
+                vab.vhstart = k.vh;
+                vab.vhend = k.vh + k.vh_size;
+                vab.vbstart = candidates[guess];
+                vab.vbend = vab.vbstart + k.vag_size;
 
-			return;
+                int multiplier = 1;
+
+				if (check_sample_ends)
+                {
+                    multiplier = 2;
+				}
+
+				vab.vbprob = (decimal)best / (decimal)(k.vagnum * multiplier);
+
+                if (use_probability)
+                {
+					if (vab.vbprob < vb_correct_needed)
+					{
+						vab.vb_not_found = true;
+					}
+					else
+					{
+						vab.vb_not_found = false;
+					}
+				} 
+                else if ((k.vagnum * multiplier) - best <= vb_correct_needed)
+                {
+                    vab.vb_not_found = false;
+                } 
+                else
+                {
+                    vab.vb_not_found = true;
+                }
+
+				vi.Add(vab);
+            }
+            si.vab = vi.ToArray();
+
+			return si;
         }
 
         static SeqInfo[] CountSepTracks(byte[] mem, int index = 0, bool strict = true, int sep_file = -1)
 		{
             //string ram = Encoding.Latin1.GetString(mem);
             int loc = index + 6;
-            int seqdat = 0;
-            List<SeqInfo> list = new();
+			List<SeqInfo> list = new();
 
 
             bool found = true;
@@ -430,8 +576,8 @@ namespace PsfParamFinder
             {
                 SeqInfo s = new();
                 found = false;
-                
-                seqdat = BinaryPrimitives.ReverseEndianness(BitConverter.ToInt32(mem, loc + 9)) + 13;
+
+				int seqdat = BinaryPrimitives.ReverseEndianness(BitConverter.ToInt32(mem, loc + 9)) + 13;
 				loc += seqdat;
 
 				if (seqdat < 0 || loc > mem.Length)
@@ -446,7 +592,7 @@ namespace PsfParamFinder
 				}
                 else if (!strict)
                 {
-					if (mem[loc - 3] == 0xFF && mem[loc - 2] == 0x2F && mem[loc - 1] == 0x00)
+					if (mem[loc - 3] == 0xFF && mem[loc - 2] == 0x00 && mem[loc - 1] == 0x00)
 					{
 						found = true;
 					}
@@ -504,9 +650,9 @@ namespace PsfParamFinder
 
         static byte[] RemoveLibTags(byte[] data) 
         {
-			List<string> liblines = new List<string>();
-			StreamReader sr = new StreamReader(new MemoryStream(data));
-            BinaryReader br = new BinaryReader(sr.BaseStream);
+			List<string> liblines = new();
+			StreamReader sr = new(new MemoryStream(data));
+            BinaryReader br = new(sr.BaseStream);
             string lib = "";
 			uint tagsig = br.ReadUInt32();
 
@@ -618,7 +764,7 @@ namespace PsfParamFinder
             try
             {
                 FileStream spar = File.OpenWrite(arg);
-                BinaryWriter nopointer = new BinaryWriter(spar, Encoding.UTF8);
+                BinaryWriter nopointer = new(spar, Encoding.UTF8);
                 nopointer.Write(savepar_test.SeqNum);
                 nopointer.Write(savepar_test.Version);
                 nopointer.Write(savepar_test.MvolL);
@@ -708,8 +854,8 @@ namespace PsfParamFinder
             {
                 //Console.WriteLine(f);
                 mem = LoadFile(f);
-                MemoryStream fstream = new MemoryStream(mem.ram);
-                InternalParams testpar = binvals(fstream);
+                MemoryStream fstream = new(mem.ram);
+                InternalParams testpar = Binvals(fstream);
                 PsfParameter pp;
                 string drvname;
                 if (testpar != null)
@@ -733,7 +879,7 @@ namespace PsfParamFinder
                 }
             }
         }
-        static string nullterm(string s, int index)
+        static string Nullterm(string s, int index)
         {
             return s[index..s.IndexOf('\0', index)];
         }
@@ -742,8 +888,8 @@ namespace PsfParamFinder
         {
             try
             {
-                List<string> liblines = new List<string>();
-                StreamReader sr = new StreamReader(br.BaseStream);
+                List<string> liblines = new();
+                StreamReader sr = new(br.BaseStream);
                 string lib = "";
                 if (tagpos < 0)
                 {
@@ -754,7 +900,7 @@ namespace PsfParamFinder
                 }
                 if (tagpos > (br.BaseStream.Length - 5))
                 {
-                    return new string[0];
+                    return Array.Empty<string>();
                 }
                 br.BaseStream.Seek(tagpos, SeekOrigin.Begin);
                 uint tagsig = br.ReadUInt32();
@@ -780,7 +926,7 @@ namespace PsfParamFinder
                     }
                 }
                 liblines.Sort();
-                List<string> libs = new List<string>();
+                List<string> libs = new();
 
                 foreach (string ls in liblines)
                 {
@@ -800,13 +946,13 @@ namespace PsfParamFinder
             {
                 Console.Error.WriteLine("Tag Exception: {0}", mx.Message);
             }
-            return new string[0];
+            return Array.Empty<string>();
         }
 
         static PsfTable LoadFile(string filename)
         {
-            FileStream fs = new FileStream(filename, FileMode.Open);
-            BinaryReader br = new BinaryReader(fs);
+            FileStream fs = new(filename, FileMode.Open);
+            BinaryReader br = new(fs);
             uint ftype = br.ReadUInt32();
             PsfTable pt = null;
             switch (ftype)
@@ -830,10 +976,12 @@ namespace PsfParamFinder
                     pt = LoadExe(br);
                     pt.minipsfs = new List<PsfFile>();
                     fs.Dispose();
-                    PsfFile info = new PsfFile();
-                    info.filename = filename;
-                    info.headersect = new byte[2048];
-                    Array.Copy(pt.ram, info.headersect, 2048);
+					PsfFile info = new()
+					{
+						filename = filename,
+						headersect = new byte[2048]
+					};
+					Array.Copy(pt.ram, info.headersect, 2048);
 					info.segment = BitConverter.ToUInt32(info.headersect, 24) / 0x20000000;
 					info.start = 2048;
                     info.end = (uint)pt.ram.Length;
@@ -853,11 +1001,13 @@ namespace PsfParamFinder
 
         static PsfTable LoadMiniPsf(string filename)
         {
-            PsfTable ptab = new PsfTable();
-            ptab.ftype = PsfTypes.MINIPSF;
-            ptab.ram = new byte[0x200000];
-            ptab.minipsfs = new List<PsfFile>();
-            LoadPsfFile(filename, ptab);
+			PsfTable ptab = new()
+			{
+				ftype = PsfTypes.MINIPSF,
+				ram = new byte[0x200000],
+				minipsfs = new List<PsfFile>()
+			};
+			LoadPsfFile(filename, ptab);
             uint lowest = uint.MaxValue;
             uint highest = uint.MinValue;
             foreach (PsfFile se in ptab.minipsfs)
@@ -892,7 +1042,7 @@ namespace PsfParamFinder
             try
             {
                 FileStream file = new(fn, FileMode.Open);
-                BinaryReader binary = new BinaryReader(file);
+                BinaryReader binary = new(file);
                 PsfFile info = new();
                 byte[] tempram = new byte[0x200000];
                 binary.BaseStream.Seek(4, SeekOrigin.Begin);
@@ -951,7 +1101,7 @@ namespace PsfParamFinder
                 pn = psfTable.minipsfs.Count - 1;
             }
 
-            List<bool> oldModified = new List<bool>();
+            List<bool> oldModified = new();
             uint oldstart = psfTable.minipsfs[pn].start, oldend = psfTable.minipsfs[pn].end;
             int oldlen = fn.Length;
             bool resized = false;
@@ -1025,24 +1175,18 @@ namespace PsfParamFinder
         {
             try
             {
-                if (psfFile.reserved_area == null)
-                {
-                    psfFile.reserved_area = new byte[0];
-                }
-				if (psfFile.tags == null)
-				{
-					psfFile.tags = new byte[0];
-				}
+                psfFile.reserved_area ??= Array.Empty<byte>();
+				psfFile.tags ??= Array.Empty<byte>();
                 if (String.IsNullOrEmpty(fn))
                 {
                     fn = psfFile.filename;
                 }
-				BinaryWriter bw = new BinaryWriter(new FileStream(fn, FileMode.Create));
+				BinaryWriter bw = new(new FileStream(fn, FileMode.Create));
                 bw.Write(0x01465350); //PSF signature
                 bw.Write(psfFile.reserved_area.Length);
 
-                MemoryStream mem = new MemoryStream();
-				ZlibStream zlib = new ZlibStream(mem, CompressionMode.Compress, CompressionLevel.Level9, true);
+                MemoryStream mem = new();
+				ZlibStream zlib = new(mem, CompressionMode.Compress, CompressionLevel.Level9, true);
 				zlib.Write(psfFile.headersect);
                 uint unc_size = psfFile.end - psfFile.start;
                 zlib.Write(ram, (int)psfFile.start, (int)unc_size);
@@ -1082,8 +1226,8 @@ namespace PsfParamFinder
                 {
                     return Path.GetFileNameWithoutExtension(psfFile.filename);
                 }
-                BinaryReader br = new BinaryReader(new MemoryStream(psfFile.tags));
-                StreamReader sr = new StreamReader(br.BaseStream);
+                BinaryReader br = new(new MemoryStream(psfFile.tags));
+                StreamReader sr = new(br.BaseStream);
                 uint tagsig = br.ReadUInt32();
                 string lib = "";
                 string fname = null;
@@ -1127,7 +1271,7 @@ namespace PsfParamFinder
         {
             try
             {
-                BinaryWriter binaryWriter = new BinaryWriter(File.OpenWrite(fn));
+                BinaryWriter binaryWriter = new(File.OpenWrite(fn));
                 binaryWriter.Write(psfTable.ram);
                 binaryWriter.Close();
                 return true;
@@ -1140,10 +1284,10 @@ namespace PsfParamFinder
         }
         static PsfTable LoadPsf(BinaryReader f)
         {
-            PsfTable ptab = new PsfTable();
+            PsfTable ptab = new();
             ptab.ftype = PsfTypes.PSF;
             ptab.minipsfs = new List<PsfFile>();
-            PsfFile info = new PsfFile();
+            PsfFile info = new();
             byte[] tempram = new byte[0x200000];
             f.BaseStream.Seek(4, SeekOrigin.Begin);
             int rsize = f.ReadInt32();
@@ -1151,7 +1295,7 @@ namespace PsfParamFinder
             info.crc = f.ReadUInt32();
             info.modified = false;
             info.reserved_area = f.ReadBytes(rsize);
-            ZlibStream zlib = new ZlibStream(f.BaseStream, CompressionMode.Decompress);
+            ZlibStream zlib = new(f.BaseStream, CompressionMode.Decompress);
             int bytesread = zlib.Read(tempram, 0, 0x200000);
             info.headersect = new byte[2048];
             Array.Copy(tempram, info.headersect, 2048);
@@ -1175,12 +1319,12 @@ namespace PsfParamFinder
         static PsfTable LoadExe(BinaryReader b)
         {
             b.BaseStream.Seek(0, SeekOrigin.Begin);
-            PsfTable psf = new PsfTable();
+            PsfTable psf = new();
             psf.ftype = PsfTypes.EXE;
             psf.ram = b.ReadBytes((int)b.BaseStream.Length);
             return psf;
         }
-        static InternalParams binvals(Stream fs) //rewrite this without streams if you ever get around to it
+        static InternalParams Binvals(Stream fs) //rewrite this without streams if you ever get around to it
         {// assuming now that the segment is consistent
             try
             {
@@ -1188,21 +1332,23 @@ namespace PsfParamFinder
                 int param3;
                 long postemp;
                 
-                BinaryReader br = new BinaryReader(fs);
-                StreamReader sr = new StreamReader(fs, Encoding.ASCII);
+                BinaryReader br = new(fs);
+                StreamReader sr = new(fs, Encoding.ASCII);
                 string psfexe = sr.ReadToEnd();
-                InternalParams ip = new InternalParams();
-                ip.sig = psfexe.IndexOf("PSF_DRIVER_INFO:");
-                fs.Seek(24, SeekOrigin.Begin);
+				InternalParams ip = new()
+				{
+					sig = psfexe.IndexOf("PSF_DRIVER_INFO:")
+				};
+				fs.Seek(24, SeekOrigin.Begin);
                 ip.offset = br.ReadUInt32() - 2048;
                 ipoffset = ip.offset % 0x20000000;
                 fs.Seek(ip.sig + 16, SeekOrigin.Begin);
                 ip.loadaddr = br.ReadUInt32();
                 ip.entrypoint = br.ReadUInt32();
                 ip.drivernameloc = br.ReadUInt32();
-                ip.drivername = nullterm(psfexe, (int)(ip.drivernameloc % 0x20000000 - ipoffset));
+                ip.drivername = Nullterm(psfexe, (int)(ip.drivernameloc % 0x20000000 - ipoffset));
                 ip.exenameloc = br.ReadUInt32();
-                ip.exename = nullterm(psfexe, (int)(ip.exenameloc % 0x20000000 - ipoffset));
+                ip.exename = Nullterm(psfexe, (int)(ip.exenameloc % 0x20000000 - ipoffset));
                 ip.crc = br.ReadUInt32();
                 ip.jumppatch = br.ReadUInt32();
                 SongArea sa;
@@ -1231,7 +1377,7 @@ namespace PsfParamFinder
 				{ //potential 0 byte parameters as comments or something. but there could be a 0 length parameter as end
                     fs.Seek(param2, SeekOrigin.Begin);
                     PsfParameter pp = new PsfParameter(tparam2, tparam, br.ReadBytes(param3));
-                    ip.psfparams.Add(nullterm(psfexe, (int)param), pp);
+                    ip.psfparams.Add(Nullterm(psfexe, (int)param), pp);
                     fs.Seek(postemp, SeekOrigin.Begin);
                     tparam = br.ReadUInt32();
                     tparam2 = br.ReadUInt32();
@@ -1251,9 +1397,9 @@ namespace PsfParamFinder
 
         static byte[] BinaryDriverInfo(InternalParams ip)
         { //no adding parameters or changing names since the exe would have to be recompiled for it to do anything, and string table has to get moved
-            MemoryStream memory = new MemoryStream();
-            BinaryWriter bw = new BinaryWriter(memory);
-            StreamWriter sw = new StreamWriter(memory, Encoding.ASCII);
+            MemoryStream memory = new();
+            BinaryWriter bw = new(memory);
+            StreamWriter sw = new(memory, Encoding.ASCII);
             //uint ipoffset = (ip.offset % 0x20000000) + (segment * 0x20000000);
 
 
