@@ -10,6 +10,8 @@ using System.Buffers;
 using System.Text;
 using System.Linq;
 using System.Buffers.Binary;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 
 //using System.Runtime.Serialization.Formatters.Binary;
@@ -108,22 +110,6 @@ namespace PsfParamFinder
     }
 
     [Serializable]
-    public struct SoundInfoOld
-    {
-        public int seqstart;
-        public int seqend;
-        public bool is_sep;
-        public int sep_track;
-        public int vhstart;
-        public int vhend;
-        public int vbstart;
-        public int vbend;
-        public double vbprob;
-        public bool vb_from_info;
-        public bool vb_not_found;
-
-    }
-    [Serializable]
     public struct SeqInfo
     {
 		public int seqstart;
@@ -131,13 +117,19 @@ namespace PsfParamFinder
 		public bool is_sep;
         public int sep_file;
         public int file_track;
+        public bool seq_from_info;
+        public bool enabled;
+        public int priority;
+        public string md5;
 	}
 	[Serializable]
 	public struct SepInfo
     {
         public int sepstart;
         public int sepend;
-    }
+		public bool sep_from_info;
+		public string md5;
+	}
     [Serializable]
     public struct VabInfo
     {
@@ -146,9 +138,11 @@ namespace PsfParamFinder
         public int vbstart;
         public int vbend;
         public decimal vbprob;
-        public bool vb_from_info;
+		public bool vh_from_info;
+		public bool vb_from_info;
         public bool vb_not_found;
-    }
+		public string md5;
+	}
     [Serializable]
 	public struct VhInfo
     {
@@ -158,6 +152,7 @@ namespace PsfParamFinder
         public int vh_size;
         public int vb_size;
         public int vag_size;
+        public bool vh_from_info;
     }
 
 	[Serializable]
@@ -167,30 +162,297 @@ namespace PsfParamFinder
         public SepInfo[] sep;
         public VabInfo[] vab;
         public int sep_main_track;
+        public int seq_priority;
+        public string source_filename;
+        public string name;
+		public InternalParams int_params;
+	}
+    [Serializable]
+    public struct VFSFile
+    {
+        public string source;
+        public string name;
+        public int file1_start;
+		public int file1_end;
+		public int file2_start;
+		public int file2_end;
+        public bool use_params;
+        public uint filetype;
+        public short params_ver;
+        public bool is_sep;
+        public InternalParams int_params;
 	}
 
 	class Program
     {
         static void Main(string[] args)
         {
-            PsfTable table = LoadFile("105.exe");
-            SaveSoundFiles(table);
+            VFSFile[] json = SaveSoundFiles(".\\EXE", "*.exe");
+            JsonSerializerOptions options = new(JsonSerializerDefaults.General)
+            {
+                WriteIndented = true,
+                IncludeFields = true
+            };
+            string jstring = JsonSerializer.Serialize(json, options);
+            //File.WriteAllText("TEST.JSON", jstring);
+            VFSFile[] import_json = JsonSerializer.Deserialize<VFSFile[]>(jstring, options);
+            string jstring2 = JsonSerializer.Serialize(import_json, options);
+			//File.WriteAllText("TEST2.JSON", jstring2);
+			if (json.SequenceEqual(import_json))
+			{
+                Console.WriteLine();
+				Console.WriteLine("JSON SUCCESS!");
+			}
 			return;
 
         }
-        //Multiple SEQs fix: find all unique SEQ files.
-        //For non-unique SEQs, they will be distrbuted to the PSFs which have no unique SEQs of their own.
-        static SoundInfo SaveSoundFiles(PsfTable table, bool checkall = true, bool verbose = false, bool checkbrute = false, 
+        static VFSFile[] SaveSoundFiles(string dir, string pattern = "*.psf", short params_ver = 0, bool use_all_combinations = false,
+            SearchOption so = SearchOption.AllDirectories, bool brute = false, bool verbose = false, bool use_largest_seq = false,
+            bool strict = true, bool prioritize_info = true, TextWriter con = null)
+        {
+            if (con == null)
+            {
+				con = Console.Out;
+			}
+
+
+			List<SoundInfo> psffiles = new();
+            Dictionary<string, int> vabmd5 = new(); //Value = Index in vabfiles
+			Dictionary<string, int> seqmd5 = new(); //Value = Number of times SEQ appears
+			List<VFSFile> vabfiles = new();
+			foreach (string file in Directory.EnumerateFiles(dir, pattern, so))
+            {
+                if (verbose)
+                {
+                    con.WriteLine("Loading {0}...", Path.GetFullPath(file));
+				}
+                SoundInfo info = GetSoundFiles(LoadFile(file), checkbrute: brute, prioritize_spec: strict, verbose: verbose, con: con);
+                info.source_filename = Path.GetFullPath(file);
+                if (verbose)
+                {
+                    con.WriteLine("{0} SEQs, {1} SEPs, {2} VABs, SEP Track {3}", info.seq.Length, info.sep.Length, info.vab.Length, info.sep_main_track);
+                }
+                psffiles.Add(info);
+                foreach(VabInfo vi in info.vab)
+                {
+                    if (!vabmd5.ContainsKey(vi.md5))
+                    {
+                        vabmd5.Add(vi.md5, vabfiles.Count);
+						VFSFile file1 = new()
+						{
+							source = info.source_filename,
+							//params_ver = params_ver,
+							use_params = false,
+							name = "VAB #" + vabfiles.Count + ": " + info.name,
+							//int_params = info.int_params,
+							file1_start = vi.vhstart,
+							file1_end = vi.vhend,
+							file2_start = vi.vbstart,
+							file2_end = vi.vbend,
+                            is_sep = false,
+							filetype = 0xFFFFFF0F //VAB
+						};
+                        if (verbose)
+                        {
+                            con.WriteLine("VAB from file {0} with MD5 {1} ({2} bytes) added", 
+                                Path.GetFileName(file), vi.md5, vi.vhend - vi.vhstart + (vi.vbend - vi.vbstart));
+                        }
+                        vabfiles.Add(file1);
+					}
+                    else if (verbose)
+                    {
+                        con.WriteLine("VAB from file {0} with MD5 {1} ({2} bytes) not added, duplicate", 
+                            Path.GetFileName(file), vi.md5, vi.vhend - vi.vhstart + (vi.vbend - vi.vbstart));
+                    }
+                }
+                foreach (SeqInfo si in info.seq)
+                {
+                    if (seqmd5.ContainsKey(si.md5))
+                    {
+                        if (!use_largest_seq)
+                        {
+							seqmd5[si.md5]++;
+						}
+					}
+                    else
+                    {
+                        seqmd5.Add(si.md5, 1);
+                    }
+					if (verbose)
+					{
+						con.WriteLine("SEQ from file {0} with MD5 {1} found, {2} time(s) total, {3} bytes, PSF_DRIVER_INFO: {4}, Priority {5}", 
+                            Path.GetFileName(file), si.md5, seqmd5[si.md5], si.seqend - si.seqstart, si.seq_from_info, si.priority);
+					}
+				}
+                if (verbose)
+                {
+                    con.WriteLine();
+                    con.WriteLine();
+                }
+            }
+
+			for (int i = 0; i < psffiles.Count; i++)
+			{
+                //This is for editing the infos to disable or enable the SEQ files
+                int[] unique =
+                {
+                    int.MaxValue,
+                    int.MaxValue,
+                    int.MaxValue,
+                    int.MaxValue
+                };
+				int size = -1, guess = -1, priority = -1;
+                if (use_all_combinations)
+                {
+                    for (int j = 0; j < psffiles[i].seq.Length; j++)
+                    {
+                        psffiles[i].seq[j].enabled = true;
+                    }
+                }
+                else
+                {
+                    for (int j = 0; j < psffiles[i].seq.Length; j++) //uniqueness checking loop
+                    {
+                        if (!prioritize_info && (psffiles[i].seq[j].priority & 1) == 1)
+                        {
+                            psffiles[i].seq[j].seq_from_info = false;
+                            psffiles[i].seq[j].priority--;
+                        }
+                        if (seqmd5.TryGetValue(psffiles[i].seq[j].md5, out int md5temp) && md5temp < unique[psffiles[i].seq[j].priority])
+                        {
+                            unique[psffiles[i].seq[j].priority] = seqmd5[psffiles[i].seq[j].md5];
+						}
+                        /*
+                        if (psffiles[i].seq[j].is_sep && psffiles[i].seq[j].file_track == psffiles[i].sep_main_track)
+                        {
+                            if (psffiles[i].seq[j].seq_from_info && seqmd5[psffiles[i].seq[j].md5] < unique_sep_info)
+                            {
+                                unique_sep_info = seqmd5[psffiles[i].seq[j].md5];
+                                //psffiles[i].seq[j].priority = 3;
+
+								if (priority < 3)
+                                {
+                                    priority = 3; 
+                                }
+							}
+                            else if (seqmd5[psffiles[i].seq[j].md5] < unique_sep)
+                            {
+								unique_sep = seqmd5[psffiles[i].seq[j].md5];
+								if (priority < 2)
+								{
+									priority = 2;
+								}
+							}
+                        }
+                        else if (psffiles[i].seq[j].seq_from_info && seqmd5[psffiles[i].seq[j].md5] < unique_info)
+                        {
+                            unique_info = seqmd5[psffiles[i].seq[j].md5];
+							if (priority < 1)
+							{
+								priority = 1;
+							}
+						}
+                        else if (seqmd5[psffiles[i].seq[j].md5] < unique)
+                        {
+							unique_info = seqmd5[psffiles[i].seq[j].md5];
+							if (priority < 0)
+							{
+								priority = 0;
+							}
+						}
+                        */
+                    }
+
+                    priority = -1;
+                    for (int j = 0; j < unique.Length; j++)
+                    {
+                        if (unique[j] < int.MaxValue)
+                        {
+                            priority = j;
+                        }
+                    }
+					size = -1;
+					guess = 0;
+					for (int j = 0; j < psffiles[i].seq.Length; j++) //size checking loop
+                    {
+                        if (psffiles[i].seq[j].priority == priority && seqmd5[psffiles[i].seq[j].md5] == unique[priority] 
+                            && (psffiles[i].seq[j].seqend - psffiles[i].seq[j].seqstart) > size)
+                        {
+                            guess = j;
+                            size = psffiles[i].seq[j].seqend - psffiles[i].seq[j].seqstart;
+						}
+                    }
+                    psffiles[i].seq[guess].enabled = true;
+                    if (!use_largest_seq)
+                    {
+                        seqmd5.Remove(psffiles[i].seq[guess].md5);
+                    }
+                    if (verbose)
+                    {
+                        con.WriteLine("SEQ {0} of file {1}, MD5 {2} selected with priority {3}, size {4} bytes, {5} total SEQs remain", 
+                            guess, psffiles[i].name, psffiles[i].seq[guess].md5, priority, size, seqmd5.Count);
+                    }
+
+				}
+			}
+			foreach (SoundInfo sound in psffiles)
+			{
+                int tracknum = 1;
+				foreach (SeqInfo seq in sound.seq)
+				{
+                    if (seq.enabled)
+                    {
+                        foreach (VabInfo vab in sound.vab)
+                        {
+                            VFSFile file1 = new()
+                            {
+                                is_sep = seq.is_sep,
+                                params_ver = params_ver,
+                                use_params = true,
+                                int_params = sound.int_params,
+                                source = sound.source_filename,
+                                name = sound.name,
+                                file1_start = seq.seqstart,
+                                file1_end = seq.seqend,
+                                filetype = 0x01020000 + (uint)vabmd5[vab.md5]
+                            };
+                            if (tracknum > 1)
+                            {
+                                file1.name += " (" + tracknum + ")";
+                            }
+                            tracknum++;
+                            vabfiles.Add(file1);
+                            if (verbose)
+                            {
+                                con.WriteLine("Added SEQ file at pos #{0}, base VAB #{1}, track {2}, SEP: {3}",
+                                    vabfiles.Count - 1, vabmd5[vab.md5], file1.name, file1.is_sep);
+                            }
+                        }
+                    }
+                    else if (verbose)
+                    {
+                        con.WriteLine("SEQ file skipped from {0}", sound.name);
+                    }
+				}
+			}
+
+			return vabfiles.ToArray();
+        }
+
+        static SoundInfo GetSoundFiles(PsfTable table, bool checkall = true, bool verbose = false, bool checkbrute = false, 
             bool prioritize_spec = true, bool allow_vabp = false, bool allow_seqp = true, bool seq_vh_search_all = true, 
             decimal vb_correct_needed = (decimal)1, bool check_sample_ends = false, bool use_probability = false, 
-            TextWriter con = null)
+            bool check_vab = true, TextWriter con = null)
         {
             
             MemoryStream rampar = new(table.ram);
             InternalParams ip = Binvals(rampar);
-            SoundInfo si = new();
-            
-            int seqsearch = -4;
+            SoundInfo si = new()
+            {
+                sep_main_track = -1,
+                int_params = ip
+            };
+			int seqsearch = -4;
 
             //int vabsize, vbsize, vhsize, vagsize, vagnum;
             List<int> clist = new();
@@ -199,23 +461,62 @@ namespace PsfParamFinder
                 con = Console.Out;
             }
 
-			foreach (SongArea s in ip.blocks)
+            if (!(ip == null || ip.blocks == null))
             {
-                clist.Add((int)(s.addr - ip.offset));
-                foreach (PsfFile psf in table.minipsfs)
+                foreach (SongArea s in ip.blocks)
                 {
-                    if (s.addr - ip.offset + psf.start - 2048 < table.ram.Length - 16)
+                    clist.Add((int)(s.addr - ip.offset));
+                    foreach (PsfFile psf in table.minipsfs)
                     {
-						clist.Add((int)(s.addr - ip.offset + psf.start - 2048));
-					}
+                        if (s.addr - ip.offset + psf.start - 2048 < table.ram.Length - 16)
+                        {
+                            clist.Add((int)(s.addr - ip.offset + psf.start - 2048));
+                        }
+                    }
                 }
             }
-
-
-
-            //FIND CANDIDATES USING PARAMETERS HERE
-
-
+            try
+            {
+                if (!(ip == null || ip.psfparams == null))
+                {
+					if (ip.psfparams.TryGetValue("seqnum", out PsfParameter pp))
+					{
+						si.sep_main_track = pp.value.FirstOrDefault();
+					}
+					if (ip.psfparams.TryGetValue("SEQ/SEP/VAG Address", out pp))
+                    {
+                        clist.Add((int)(BitConverter.ToUInt32(pp.value) - ip.offset));
+                    }
+                    if (ip.psfparams.TryGetValue("VH Address", out pp))
+                    {
+                        clist.Add((int)(BitConverter.ToUInt32(pp.value) - ip.offset));
+                    }
+                    if (ip.psfparams.TryGetValue("VB Address", out pp))
+                    {
+                        clist.Add((int)(BitConverter.ToUInt32(pp.value) - ip.offset));
+                    }
+					if (ip.psfparams.TryGetValue("SEQ/SEP Mem Address", out pp))
+					{
+						clist.Add((int)(BitConverter.ToUInt32(pp.value) - ip.offset));
+					}
+					if (ip.psfparams.TryGetValue("VH Mem Address", out pp))
+					{
+						clist.Add((int)(BitConverter.ToUInt32(pp.value) - ip.offset));
+					}
+					if (ip.psfparams.TryGetValue("VB Mem Address", out pp))
+					{
+						clist.Add((int)(BitConverter.ToUInt32(pp.value) - ip.offset));
+					}
+				}
+                si.name = FindName(table.minipsfs.Last());
+            }
+            catch (Exception ex)
+            {
+                if (verbose)
+                {
+                    con.WriteLine("Parameter error: {0}", ex.ToString());
+                }
+            }
 
             List<int> plist = clist.Distinct().ToList();
 			int[] pcandidates = plist.ToArray();
@@ -224,6 +525,7 @@ namespace PsfParamFinder
 			List<SepInfo> seps = new();
 
             bool seqp = false;
+            bool seq_from_params = true;
 
             List<int> seqfiles = new();
 
@@ -277,17 +579,27 @@ namespace PsfParamFinder
 						}
 						if (seqInfo.seqend > -1)
 						{
+                            seqInfo.md5 = GetMD5(table.ram, seqInfo.seqstart + 8, seqInfo.seqend);
+                            seqInfo.seq_from_info = seq_from_params;
+                            seqInfo.enabled = false;
+                            seqInfo.priority = 0;
+                            if (seq_from_params)
+                            {
+                                seqInfo.priority++;
+                            }
 							seqs.Add(seqInfo);
 						}
 					}
 					else
 					{
 						int oldcount = seqs.Count;
-						seqs.AddRange(CountSepTracks(table.ram, seqInfo.seqstart, prioritize_spec, seps.Count));
+						seqs.AddRange(CountSepTracks(table.ram, seqInfo.seqstart, prioritize_spec, seps.Count, seq_from_params, si.sep_main_track));
 						if (seqs.Count > oldcount)
 						{
 							sepInfo.sepstart = seqInfo.seqstart;
 							sepInfo.sepend = seqs.Last().seqend;
+                            sepInfo.md5 = GetMD5(table.ram, sepInfo.sepstart, sepInfo.sepend);
+                            sepInfo.sep_from_info = seq_from_params;
 							seps.Add(sepInfo);
 						}
 
@@ -315,13 +627,30 @@ namespace PsfParamFinder
 						plist = clist.Distinct().ToList();
 						pcandidates = plist.ToArray();
 					}
+                    else
+                    {
+						seq_from_params = false;
+					}
 				}
 			}
+
+            int highest_priority = -1;
+            foreach (SeqInfo seq in seqs)
+            {
+                if (seq.priority > highest_priority)
+                {
+                    highest_priority = seq.priority;
+                }
+            }
+            si.seq_priority = highest_priority;
 
             si.seq = seqs.ToArray();
             si.sep = seps.ToArray();
 
-
+            if (!check_vab)
+            {
+                return si;
+            }
 
 			plist = clist.Distinct().ToList();
 			pcandidates = plist.ToArray();
@@ -331,6 +660,8 @@ namespace PsfParamFinder
             int vhsearch = -4;
             bool vabp = false;
             bool strict_size = prioritize_spec;
+
+            bool vh_from_params = true;
 
             while (vhsearch != -1)
             {
@@ -369,6 +700,7 @@ namespace PsfParamFinder
 						{
 							maxvag = vh.vagnum;
 						}
+                        vh.vh_from_info = vh_from_params;
 						vhfiles.Add(vh.vh);
                         vagfiles.Add(vh);
 					}
@@ -381,6 +713,7 @@ namespace PsfParamFinder
 				}
 				else
                 {
+                    vh_from_params = false;
                     if (seq_vh_search_all)
                     {
 						vhsearch = vh.vh;
@@ -394,12 +727,14 @@ namespace PsfParamFinder
 						vabp = true;
 						plist = clist.Distinct().ToList();
 						pcandidates = plist.ToArray();
+						vh_from_params = true;
 					}
                     if (strict_size && vhsearch == -1 && vagfiles.Count == 0)
                     {
                         strict_size = false;
 						plist = clist.Distinct().ToList();
 						pcandidates = plist.ToArray();
+						vh_from_params = true;
 					}
 				}
 			}
@@ -438,6 +773,7 @@ namespace PsfParamFinder
 			if (checkbrute)
 			{
 				clist.Clear();
+                param_num = 0;
 				int rrloc = -16;
 				do
 				{
@@ -527,6 +863,7 @@ namespace PsfParamFinder
                 vab.vhend = k.vh + k.vh_size;
                 vab.vbstart = candidates[guess];
                 vab.vbend = vab.vbstart + k.vag_size;
+                vab.vh_from_info = k.vh_from_info;
 
                 int multiplier = 1;
 
@@ -551,20 +888,24 @@ namespace PsfParamFinder
                 else if ((k.vagnum * multiplier) - best <= vb_correct_needed)
                 {
                     vab.vb_not_found = false;
-                } 
+                }
                 else
                 {
                     vab.vb_not_found = true;
                 }
 
+                vab.md5 = GetMD5(table.ram[vab.vhstart..vab.vhend].Concat(table.ram[vab.vbstart..vab.vbend]).ToArray());
+
+
 				vi.Add(vab);
             }
             si.vab = vi.ToArray();
 
+            rampar.Dispose();
 			return si;
         }
 
-        static SeqInfo[] CountSepTracks(byte[] mem, int index = 0, bool strict = true, int sep_file = -1)
+        static SeqInfo[] CountSepTracks(byte[] mem, int index = 0, bool strict = true, int sep_file = -1, bool from_info = false, int main_track = -1)
 		{
             //string ram = Encoding.Latin1.GetString(mem);
             int loc = index + 6;
@@ -617,6 +958,18 @@ namespace PsfParamFinder
 					s.is_sep = true;
                     s.sep_file = sep_file;
                     s.file_track = list.Count;
+                    s.md5 = GetMD5(mem, s.seqstart + 2, s.seqend);
+                    s.enabled = false;
+                    s.seq_from_info = from_info;
+                    s.priority = 0;
+                    if (from_info)
+                    {
+                        s.priority++;
+                    }
+                    if (s.file_track == main_track)
+                    {
+                        s.priority += 2;
+                    }
 					list.Add(s);
 				}
             }
@@ -646,6 +999,20 @@ namespace PsfParamFinder
                 return mem.LastIndexOf(magic, start, StringComparison.Ordinal);
             }
             return mem.IndexOf(magic, start, StringComparison.Ordinal);
+        }
+
+        static string GetMD5(byte[] ram, int start = 0, int end = -1)
+        {
+            string m;
+            if (end == -1)
+            {
+                end = ram.Length;
+            }
+            MD5 md5 = MD5.Create();
+            m = Convert.ToHexString(md5.ComputeHash(ram, start, end - start));
+            md5.Clear();
+            md5.Dispose();
+            return m;
         }
 
         static byte[] RemoveLibTags(byte[] data) 
@@ -792,22 +1159,105 @@ namespace PsfParamFinder
 			return false;
 		}
 
-        static void ParamsCatalog(string dir, bool allexe, StreamWriter outstream, bool drvout, bool paramout)
+        static string[] SepCatalog(string dir, string ext = "*.exe", TextWriter con = null, SearchOption so = SearchOption.AllDirectories, 
+            bool checksep = true, bool printparams = false)
+        {
+            HashSet<string> sepdirs = new();
+            HashSet<string> sepparams = new();
+            if (con == null)
+            {
+                con = Console.Out;
+            }
+            foreach (string g in Directory.EnumerateFiles(dir, ext, so))
+            {
+                PsfTable psf = LoadFile(Path.GetFullPath(g));
+                bool sep = false;
+                if (psf != null)
+                {
+                    if (checksep)
+                    {
+                        SoundInfo soundInfo = GetSoundFiles(psf, check_vab: false);
+                        if (soundInfo.sep.Length > 0)
+                        {
+                            sep = true;
+                        }
+                    }
+                    else
+                    {
+                        sep = true;
+                    }
+                    if (sep)
+                    {
+                        sepdirs.Add(Path.GetDirectoryName(g)); //only works when checking seps!
+                        InternalParams internalParams = Binvals(new MemoryStream(psf.ram));
+                        uint val = 0;
+                        if (internalParams != null && internalParams.drivername != null)
+                        {
+							con.WriteLine("{0}: {1}", g, internalParams.drivername);
+						}
+                        if (internalParams != null)
+                        {
+                            foreach (KeyValuePair<string, PsfParameter> pair in internalParams.psfparams)
+                            {
+                                sepparams.Add(pair.Key);
+                                switch (pair.Value.value.Length)
+                                {
+                                    case 1:
+                                        //val = BitConverter.ToChar(pair.Value.value);
+                                        val = pair.Value.value[0];
+                                        break;
+                                    case 2:
+                                        val = BitConverter.ToUInt16(pair.Value.value);
+                                        break;
+                                    case 4:
+                                        val = BitConverter.ToUInt32(pair.Value.value);
+                                        break;
+                                }
+                                con.WriteLine("{0} - {1} ({2})", pair.Key, val, pair.Value.value.Length);
+                            }
+                        }
+						Console.WriteLine();
+					}
+                    //else
+                    //{
+                        //con.WriteLine("{0} has no SEP files", g);
+                    //}
+                }
+            }
+
+            if (printparams)
+            {
+                con.WriteLine();
+                con.WriteLine("***SEP FILE PARAMETERS***");
+                con.WriteLine();
+                foreach(string s in sepparams)
+                {
+                    con.WriteLine(s);
+                }
+            }
+            return sepdirs.ToArray();
+        }
+
+        static void ParamsCatalog(string dir, StreamWriter outstream = null, string ext = "*.exe", bool allexe = true, bool sepout = true, bool drvout = true, bool paramout = true)
         {
             //StreamWriter con = new StreamWriter(outstream);
+            if (outstream == null)
+            {
+                outstream = new StreamWriter(Console.OpenStandardOutput());
+            }
             Dictionary<string, PsfParameter> psfParameters = new();
             Dictionary<string, InternalParams> psfDrivers = new();
             PsfParameter tp;
             InternalParams td;
             if (allexe)
             {
-                DirParams(dir, "*.exe", false, psfParameters, psfDrivers);
+                DirParams(dir, ext, false, psfParameters, psfDrivers);
             }
             else
             {
                 foreach (string d in Directory.EnumerateDirectories(dir))
                 {
-                    DirParams(d, "*.exe", true, psfParameters, psfDrivers);
+                    DirParams(Path.GetFullPath(d), ext, true, psfParameters, psfDrivers);
                 }
             }
             if (paramout)
@@ -853,29 +1303,31 @@ namespace PsfParamFinder
             foreach (string f in Directory.EnumerateFiles(d, pattern, SearchOption.AllDirectories))
             {
                 //Console.WriteLine(f);
-                mem = LoadFile(f);
-                MemoryStream fstream = new(mem.ram);
-                InternalParams testpar = Binvals(fstream);
-                PsfParameter pp;
-                string drvname;
-                if (testpar != null)
+                mem = LoadFile(Path.GetFullPath(f));
+                if (mem != null)
                 {
-                    drvname = testpar.drivername;
-                    testpar.drivername = f;
-                    drivers.TryAdd(drvname, testpar);
-                    foreach (string sp in testpar.psfparams.Keys)
+                    MemoryStream fstream = new(mem.ram);
+                    InternalParams testpar = Binvals(fstream);
+                    string drvname;
+                    if (testpar != null)
                     {
-
-                        if (testpar.psfparams.TryGetValue(sp, out pp))
+                        drvname = testpar.drivername;
+                        testpar.drivername = Path.GetFullPath(f);
+                        drivers.TryAdd(drvname, testpar);
+                        foreach (string sp in testpar.psfparams.Keys)
                         {
-                            parameters.TryAdd(sp, pp);
-                        }
-                    }
 
-                }
-                if (onefilebreak)
-                {
-                    return;
+                            if (testpar.psfparams.TryGetValue(sp, out PsfParameter pp))
+                            {
+                                parameters.TryAdd(sp, pp);
+                            }
+                        }
+
+                    }
+                    if (onefilebreak)
+                    {
+                        return;
+                    }
                 }
             }
         }
@@ -951,49 +1403,55 @@ namespace PsfParamFinder
 
         static PsfTable LoadFile(string filename)
         {
-            FileStream fs = new(filename, FileMode.Open);
-            BinaryReader br = new(fs);
-            uint ftype = br.ReadUInt32();
-            PsfTable pt = null;
-            switch (ftype)
+			PsfTable pt = null;
+			try
             {
-                case 0x01465350: //PSF
-                    string[] pl = psflibs(br, -1);
-                    if (pl.Length > 0)
-                    {
-                        fs.Dispose();
-                        pt = LoadMiniPsf(filename);
-                    }
-                    else
-                    {
-                        pt = LoadPsf(br);
-                        pt.minipsfs[0].filename = filename;
-                        fs.Dispose();
-                    }
+                FileStream fs = new(filename, FileMode.Open);
+                BinaryReader br = new(fs);
+                uint ftype = br.ReadUInt32();
+                switch (ftype)
+                {
+                    case 0x01465350: //PSF
+                        string[] pl = psflibs(br, -1);
+                        if (pl.Length > 0)
+                        {
+                            fs.Dispose();
+                            pt = LoadMiniPsf(filename);
+                        }
+                        else
+                        {
+                            pt = LoadPsf(br);
+                            pt.minipsfs[0].filename = filename;
+                            fs.Dispose();
+                        }
 
-                    break;
-                case 0x582D5350: //PSX EXE
-                    pt = LoadExe(br);
-                    pt.minipsfs = new List<PsfFile>();
-                    fs.Dispose();
-					PsfFile info = new()
-					{
-						filename = filename,
-						headersect = new byte[2048]
-					};
-					Array.Copy(pt.ram, info.headersect, 2048);
-					info.segment = BitConverter.ToUInt32(info.headersect, 24) / 0x20000000;
-					info.start = 2048;
-                    info.end = (uint)pt.ram.Length;
-                    info.modified = false;
-                    pt.minipsfs.Add(info);
-					break;
-                default:
-                    Console.Error.WriteLine("{0} is not a readable PSF or EXE file!", filename);
-                    break;
-                    
+                        break;
+                    case 0x582D5350: //PSX EXE
+                        pt = LoadExe(br);
+                        pt.minipsfs = new List<PsfFile>();
+                        fs.Dispose();
+                        PsfFile info = new()
+                        {
+                            filename = filename,
+                            headersect = new byte[2048]
+                        };
+                        Array.Copy(pt.ram, info.headersect, 2048);
+                        info.segment = BitConverter.ToUInt32(info.headersect, 24) / 0x20000000;
+                        info.start = 2048;
+                        info.end = (uint)pt.ram.Length;
+                        info.modified = false;
+                        pt.minipsfs.Add(info);
+                        break;
+                    default:
+                        Console.Error.WriteLine("{0} is not a readable PSF or EXE file!", filename);
+                        break;
+
+                }
             }
-            
+            catch (Exception e)
+            {
+                Console.Error.WriteLine("Load Exception: {0}", e.ToString());
+            }
             return pt;
         }
 
@@ -1376,7 +1834,7 @@ namespace PsfParamFinder
                 while (tparam != 0 && tparam2 != 0) // && param3 != 0
 				{ //potential 0 byte parameters as comments or something. but there could be a 0 length parameter as end
                     fs.Seek(param2, SeekOrigin.Begin);
-                    PsfParameter pp = new PsfParameter(tparam2, tparam, br.ReadBytes(param3));
+                    PsfParameter pp = new(tparam2, tparam, br.ReadBytes(param3));
                     ip.psfparams.Add(Nullterm(psfexe, (int)param), pp);
                     fs.Seek(postemp, SeekOrigin.Begin);
                     tparam = br.ReadUInt32();
@@ -1390,12 +1848,12 @@ namespace PsfParamFinder
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine(ex.Message);
+                Console.Error.WriteLine("PSF parameter block read error: {0}", ex.Message);
             }
             return null;
         }
 
-        static byte[] BinaryDriverInfo(InternalParams ip)
+        static byte[] BinaryDriverInfo(InternalParams ip) //parameters to be loaded from json for notepad
         { //no adding parameters or changing names since the exe would have to be recompiled for it to do anything, and string table has to get moved
             MemoryStream memory = new();
             BinaryWriter bw = new(memory);
