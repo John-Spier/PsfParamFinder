@@ -229,6 +229,8 @@ namespace PsfParamFinder
         public byte[] name; //64
         public int size; //Don't need extra 2 GB since there's not that much space on a CD
         public int padding;
+        public int file1_size;
+        public int file2_size;
         public int addr;
         public byte[] bin_params;
     }
@@ -266,8 +268,7 @@ namespace PsfParamFinder
         }
         static void SaveVFSFile(string filename, VFSFile[] files)
         {
-            //BinaryWriter writer = new(new FileStream(filename, FileMode.Create));
-            //StreamWriter writer1 = new(writer.BaseStream);
+            BinaryWriter writer = new(new FileStream(filename, FileMode.Create));
             int base_addr = 12 + (files.Length * 84);
             int base_pad = GetPadding(base_addr);
 
@@ -277,17 +278,21 @@ namespace PsfParamFinder
             {
                 if (files[i].use_params)
                 {
-                    files[i].binary.size = files[i].file1_end - files[i].file1_start;
+                    files[i].binary.file1_size = files[i].file1_end - files[i].file1_start;
                     if (files[i].is_sep)
                     {
-                        files[i].binary.size += 6; //remove SEP sequence ID (2), add SEQ header (8) 
+                        files[i].binary.file1_size += 6; //remove SEP sequence ID (2), add SEQ header (8) 
                     }
+                    files[i].binary.size = files[i].binary.file1_size + GetPadding(files[i].binary.file1_size, 4);
                     files[i].binary.bin_params = GetBinaryParams(files[i].int_params, files[i].params_ver);
-                    files[i].binary.size += files[i].binary.bin_params.Length + 24;
+					files[i].binary.file2_size = files[i].binary.bin_params.Length;
+					files[i].binary.size += files[i].binary.file2_size + GetPadding(files[i].binary.file2_size, 4) + 24;
                 }
                 else
                 {
-                    files[i].binary.size = files[i].file1_end - files[i].file1_start + (files[i].file2_end - files[i].file2_start);
+                    files[i].binary.file1_size = files[i].file1_end - files[i].file1_start;
+                    files[i].binary.file2_size = files[i].file2_end - files[i].file2_start;
+					files[i].binary.size = files[i].binary.file1_size + files[i].binary.file2_size;
                 }
 
                 files[i].binary.name = new byte[64];
@@ -303,6 +308,56 @@ namespace PsfParamFinder
                 files[i].binary.padding = GetPadding(files[i].binary.size);
                 addr += files[i].binary.size + files[i].binary.padding;
             }
+
+            writer.Write(0x00534656); //VFS
+            writer.Write(files.Length);
+            writer.Write((base_addr + base_pad) / 2048);
+
+            foreach (VFSFile hfile in files)
+            {
+                writer.Write(hfile.binary.name);
+                writer.Write(hfile.binary.size);
+                writer.Write(hfile.binary.addr / 2048);
+                writer.Write((hfile.binary.size + hfile.binary.padding) / 2048);
+                writer.Write(hfile.binary.addr);
+                writer.Write(hfile.filetype);
+            }
+
+            foreach (VFSFile f in files)
+            {
+                PsfTable table = LoadFile(f.source);
+                if (f.use_params)
+                {
+					writer.Write(0x004D5850); //PXM
+					writer.Write(2);
+					writer.Write(f.binary.file1_size); //size 1
+					writer.Write(8 + (2 * 8)); //addr 1
+                    writer.Write(f.binary.file2_size);
+					writer.Write(8 + (2 * 8) + f.binary.file1_size + GetPadding(f.binary.file1_size, 4)); //addr 2
+                    if (f.is_sep)
+                    {
+                        writer.Write(0x53455170); //pQES
+                        writer.Write(0x01000000); //SEQ Version 1 (big endian)
+                        writer.Write(table.ram, f.file1_start + 2, f.binary.file1_size - 8);
+                    }
+                    else
+                    {
+						writer.Write(table.ram, f.file1_start, f.binary.file1_size);
+					}
+					writer.Write(new byte[GetPadding(f.binary.file1_size, 4)]);
+                    writer.Write(f.binary.bin_params);
+                    writer.Write(new byte[GetPadding(f.binary.file2_size, 4)]);
+				}
+                else
+                {
+                    writer.Write(table.ram, f.file1_start, f.binary.file1_size);
+					writer.Write(table.ram, f.file2_start, f.binary.file2_size);
+				}
+            }
+            writer.Flush();
+            writer.Close();
+            writer.Dispose();
+
             return;
         }
 
