@@ -5,7 +5,6 @@ using System.IO;
 //using ComponentAce.Compression.Libs.zlib;
 using Ionic.Zlib;
 using Force.Crc32;
-using System.Runtime.InteropServices;
 using System.Buffers;
 using System.Text;
 using System.Linq;
@@ -89,26 +88,67 @@ namespace PsfParamFinder
     }
 
     [Serializable]
+    public struct PsfParamExport
+    {
+		public uint loc;
+		public uint value;
+		public uint nameloc;
+        public int value_size;
+	}
+
+	[Serializable]
+	public class JsonParams
+	{
+		public uint offset;
+		public int sig;
+		public uint loadaddr;
+		public uint entrypoint;
+		public string drivername;
+		public string exename;
+		public uint crc;
+		public uint jumppatch;
+		public uint drivernameloc;
+		public uint exenameloc;
+		public List<SongArea> blocks;
+		public Dictionary<string, PsfParamExport> psfparams;
+	}
+
+	[Serializable]
     public struct ParamsV1
     {
-        public short SeqNum;
-        public short Version;
-        public short MvolL;
-        public short MvolR;
-        public short VolL;
-        public short VolR;
-        public short RvolL;
-        public short RvolR;
-        public short RdepthL;
-        public short RdepthR;
-        public short Rdelay;
-        public short Rmode;
-        public short Rfeedback;
-        public int TickMode;
-        public char SeqFlags;
-        public char SeqType;
+        public ushort SeqNum;
+        public ushort Version;
+        public ushort MvolL;
+        public ushort MvolR;
+        public ushort VolL;
+        public ushort VolR;
+        public ushort RvolL;
+        public ushort RvolR;
+        public ushort RdepthL;
+        public ushort RdepthR;
+        public ushort Rdelay;
+        public ushort Rmode;
+        public ushort Rfeedback;
+        public uint TickMode;
+        public byte SeqFlags;
+        public byte SeqType;
     }
-
+    [Serializable]
+    public struct ParamsV2
+    {
+        public ushort SeqNum;
+        public ushort Version;
+		public ushort loops;
+		public byte rvol;
+        public byte rdepth;
+        public byte rdelay;
+        public byte rtype;
+        public byte rfeedback;
+        public byte reserved;
+        public byte vol;
+        public byte mvol;
+		public ushort tickmode;
+	}
     [Serializable]
     public struct SeqInfo
     {
@@ -181,40 +221,513 @@ namespace PsfParamFinder
         public short params_ver;
         public bool is_sep;
         public InternalParams int_params;
+        public VFSBinary binary;
 	}
+    [Serializable]
+    public struct VFSBinary
+    {
+        public byte[] name; //64
+        public int size; //Don't need extra 2 GB since there's not that much space on a CD
+        public int padding;
+        public int addr;
+        public byte[] bin_params;
+    }
 
-	class Program
+    class Program
     {
         static void Main(string[] args)
         {
-            VFSFile[] json = SaveSoundFiles(".\\EXE", "*.exe");
             JsonSerializerOptions options = new(JsonSerializerDefaults.General)
             {
                 WriteIndented = true,
                 IncludeFields = true
             };
-            string jstring = JsonSerializer.Serialize(json, options);
-            //File.WriteAllText("TEST.JSON", jstring);
-            VFSFile[] import_json = JsonSerializer.Deserialize<VFSFile[]>(jstring, options);
-            string jstring2 = JsonSerializer.Serialize(import_json, options);
-			//File.WriteAllText("TEST2.JSON", jstring2);
-			if (json.SequenceEqual(import_json))
-			{
-                Console.WriteLine();
-				Console.WriteLine("JSON SUCCESS!");
-			}
-			return;
+
+            VFSFile[] vs = JsonSerializer.Deserialize<VFSFile[]>(File.ReadAllText("TEST.JSON"), options);
+
+            SaveVFSFile("test.vfs", vs);
+
+            //SepCatalog(".\\EXE", checksep: false, printparams: true);
+
+            return;
 
         }
-        static VFSFile[] SaveSoundFiles(string dir, string pattern = "*.psf", short params_ver = 0, bool use_all_combinations = false,
+        static int GetPadding(int base_addr, int sector = 2048)
+        {
+            int base_pad = sector - (base_addr % sector);
+            if (base_pad == sector)
+            {
+                return 0;
+            }
+            else
+            {
+                return base_pad;
+            }
+        }
+        static void SaveVFSFile(string filename, VFSFile[] files)
+        {
+            //BinaryWriter writer = new(new FileStream(filename, FileMode.Create));
+            //StreamWriter writer1 = new(writer.BaseStream);
+            int base_addr = 12 + (files.Length * 84);
+            int base_pad = GetPadding(base_addr);
+
+            int addr = base_addr + base_pad;
+
+            for (int i = 0; i < files.Length; i++)
+            {
+                if (files[i].use_params)
+                {
+                    files[i].binary.size = files[i].file1_end - files[i].file1_start;
+                    if (files[i].is_sep)
+                    {
+                        files[i].binary.size += 6; //remove SEP sequence ID (2), add SEQ header (8) 
+                    }
+                    files[i].binary.bin_params = GetBinaryParams(files[i].int_params, files[i].params_ver);
+                    files[i].binary.size += files[i].binary.bin_params.Length + 24;
+                }
+                else
+                {
+                    files[i].binary.size = files[i].file1_end - files[i].file1_start + (files[i].file2_end - files[i].file2_start);
+                }
+
+                files[i].binary.name = new byte[64];
+                int namesize = files[i].name.Length;
+                if (namesize > 63)
+                {
+                    namesize = 63;
+                }
+                Encoding.ASCII.GetBytes(files[i].name, 0, namesize, files[i].binary.name, 0);
+                files[i].binary.name[63] = 0;
+
+                files[i].binary.addr = addr;
+                files[i].binary.padding = GetPadding(files[i].binary.size);
+                addr += files[i].binary.size + files[i].binary.padding;
+            }
+            return;
+        }
+
+        static ParamsV1 GetParamsV1(InternalParams intpar)
+        {
+			ParamsV1 v1 = new()
+			{
+				SeqNum = 0,
+				Version = 1,
+				MvolL = 127,
+				MvolR = 127,
+				VolL = 127,
+				VolR = 127,
+				RvolL = 64,
+				RvolR = 64,
+				RdepthL = 64,
+				RdepthR = 64,
+				Rdelay = 64,
+				Rmode = 0,
+				Rfeedback = 64,
+				TickMode = 2, //SS_TICK240
+				SeqFlags = 0,
+				SeqType = 0
+			};
+
+			try
+            {
+                if (!(intpar == null || intpar.psfparams == null)) //Litte endian will take care of the issues for values that don't go above 127
+                {
+                    if (intpar.psfparams.TryGetValue("Master Volume L", out PsfParameter v))
+                    {
+                        v1.MvolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("L-Master Volume", out v))
+                    {
+                        v1.MvolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("LMaster Volume", out v))
+                    {
+                        v1.MvolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Master Volume (L)", out v))
+                    {
+                        v1.MvolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Master Volume [L]", out v))
+                    {
+                        v1.MvolL = (ushort)GetUint(v.value);
+                    }
+
+                    if (intpar.psfparams.TryGetValue("Master Volume R", out v))
+                    {
+                        v1.MvolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("R-Master Volume", out v))
+                    {
+                        v1.MvolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("RMaster Volume", out v))
+                    {
+                        v1.MvolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Master Volume (R)", out v))
+                    {
+                        v1.MvolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Master Volume [R]", out v))
+                    {
+                        v1.MvolR = (ushort)GetUint(v.value);
+                    }
+
+
+                    if (intpar.psfparams.TryGetValue("Sequence Volume L", out v))
+                    {
+                        v1.VolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("svoll", out v))
+                    {
+                        v1.VolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("L-Sequence Volume", out v))
+                    {
+                        v1.VolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("LSequence Volume", out v))
+                    {
+                        v1.VolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Sequence Volume (L)", out v))
+                    {
+                        v1.VolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Sequence Volume [L]", out v))
+                    {
+                        v1.VolL = (ushort)GetUint(v.value);
+                    }
+
+                    if (intpar.psfparams.TryGetValue("Sequence Volume R", out v))
+                    {
+                        v1.VolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("svolr", out v))
+                    {
+                        v1.VolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("R-Sequence Volume", out v))
+                    {
+                        v1.VolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("RSequence Volume", out v))
+                    {
+                        v1.VolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Sequence Volume (R)", out v))
+                    {
+                        v1.VolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Sequence Volume [R]", out v))
+                    {
+                        v1.VolR = (ushort)GetUint(v.value);
+                    }
+
+                    if (intpar.psfparams.TryGetValue("seqvol", out v))
+                    {
+                        v1.VolL = (ushort)GetUint(v.value);
+                        v1.VolR = (ushort)GetUint(v.value);
+                    }
+
+                    if (intpar.psfparams.TryGetValue("Reverb Volume L", out v))
+                    {
+                        v1.RvolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("L-Reverb Volume", out v))
+                    {
+                        v1.RvolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("LReverb Volume", out v))
+                    {
+                        v1.RvolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Reverb Volume (L)", out v))
+                    {
+                        v1.RvolL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Reverb Volume [L]", out v))
+                    {
+                        v1.RvolL = (ushort)GetUint(v.value);
+                    }
+
+                    if (intpar.psfparams.TryGetValue("Reverb Volume R", out v))
+                    {
+                        v1.RvolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("R-Reverb Volume", out v))
+                    {
+                        v1.RvolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("RReverb Volume", out v))
+                    {
+                        v1.RvolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Reverb Volume (R)", out v))
+                    {
+                        v1.RvolR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Reverb Volume [R]", out v))
+                    {
+                        v1.RvolR = (ushort)GetUint(v.value);
+                    }
+
+                    if (intpar.psfparams.TryGetValue("rvol", out v))
+                    {
+                        v1.RvolL = (ushort)GetUint(v.value);
+                        v1.RvolR = (ushort)GetUint(v.value);
+                    }
+
+                    if (intpar.psfparams.TryGetValue("Reverb Depth L", out v))
+                    {
+                        v1.RdepthL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("L-Reverb Depth", out v))
+                    {
+                        v1.RdepthL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("LReverb Depth", out v))
+                    {
+                        v1.RdepthL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Reverb Depth (L)", out v))
+                    {
+                        v1.RdepthL = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Reverb Depth [L]", out v))
+                    {
+                        v1.RdepthL = (ushort)GetUint(v.value);
+                    }
+
+                    if (intpar.psfparams.TryGetValue("Reverb Depth R", out v))
+                    {
+                        v1.RdepthR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("R-Reverb Depth", out v))
+                    {
+                        v1.RdepthR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("RReverb Depth", out v))
+                    {
+                        v1.RdepthR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Reverb Depth (R)", out v))
+                    {
+                        v1.RdepthR = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Reverb Depth [R]", out v))
+                    {
+                        v1.RdepthR = (ushort)GetUint(v.value);
+                    }
+
+                    if (intpar.psfparams.TryGetValue("Reverb Depth", out v)) //Potentially char or int
+                    {
+                        v1.RdepthL = (ushort)GetUint(v.value);
+                        v1.RdepthR = (ushort)GetUint(v.value);
+                    }
+					if (intpar.psfparams.TryGetValue("rdepth", out v))
+					{
+						v1.RdepthL = (ushort)GetUint(v.value);
+						v1.RdepthR = (ushort)GetUint(v.value);
+					}
+
+					if (intpar.psfparams.TryGetValue("SPU Delay", out v))
+					{
+						v1.Rdelay = (ushort)GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("Reverb Delay", out v))
+					{
+						v1.Rdelay = (ushort)GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("rdelay", out v))
+					{
+						v1.Rdelay = (ushort)GetUint(v.value);
+					}
+
+					if (intpar.psfparams.TryGetValue("rtype", out v))
+					{
+						v1.Rmode = (ushort)GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("Reverb Type", out v))
+					{
+						v1.Rmode = (ushort)GetUint(v.value);
+					}
+
+					if (intpar.psfparams.TryGetValue("SPU Feedback", out v))
+					{
+						v1.Rdelay = (ushort)GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("Reverb Feedback", out v))
+					{
+						v1.Rdelay = (ushort)GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("rfeedback", out v))
+					{
+						v1.Rdelay = (ushort)GetUint(v.value);
+					}
+
+					if (intpar.psfparams.TryGetValue("Tick Mode", out v))
+					{
+						v1.TickMode = GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("Sequence Tick Mode", out v))
+					{
+						v1.TickMode = GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("tickmode", out v))
+					{
+						v1.TickMode = GetUint(v.value);
+					}
+
+					if (intpar.psfparams.TryGetValue("loop_off", out v)) //This needs to be in params V2 as a short
+					{
+						v1.SeqFlags = (byte)GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("Play Amount", out v))
+					{
+						v1.SeqFlags = (byte)GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("Playback Amount", out v))
+					{
+						v1.SeqFlags = (byte)GetUint(v.value);
+					}
+
+					if (intpar.psfparams.TryGetValue("loop_off", out v))
+					{
+						v1.SeqFlags = (byte)GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("Play Amount", out v))
+					{
+						v1.SeqFlags = (byte)GetUint(v.value);
+					}
+					if (intpar.psfparams.TryGetValue("Sequence Type", out v))
+					{
+						v1.SeqFlags = (byte)GetUint(v.value);
+					}
+
+                    /*
+					if (intpar.psfparams.TryGetValue("maxseq", out v))
+					{
+						v1.SeqNum = (ushort)GetUint(v.value);
+					}
+                    */
+				}
+			}
+            catch (Exception e)
+            {
+                Console.Error.WriteLine("Parameter exception {0} (Probably wrong size)", e.Message);
+            }
+            return v1;
+        }
+
+        static ParamsV2 GetParamsV2 (InternalParams intpar)
+        {
+            ParamsV1 v1 = GetParamsV1(intpar);
+			ParamsV2 v2 = new()
+			{
+				SeqNum = v1.SeqNum,
+				Version = 2,
+				rvol = (byte)((v1.RvolL + v1.RvolR) / 2),
+				rdepth = (byte)((v1.RdepthL + v1.RdepthR) / 2),
+				rdelay = (byte)v1.Rdelay,
+				rtype = (byte)v1.Rmode,
+				mvol = (byte)((v1.MvolL + v1.MvolR) / 2),
+				vol = (byte)((v1.VolL + v1.VolR) / 2),
+				tickmode = (ushort)v1.TickMode,
+				loops = v1.SeqFlags,
+                rfeedback = (byte)v1.Rfeedback
+			};
+
+			try
+            {
+                if (!(intpar == null || intpar.psfparams == null))
+                {
+                    if (intpar.psfparams.TryGetValue("loop_off", out PsfParameter v))
+                    {
+                        v2.loops = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Play Amount", out v))
+                    {
+                        v2.loops = (ushort)GetUint(v.value);
+                    }
+                    if (intpar.psfparams.TryGetValue("Playback Amount", out v))
+                    {
+                        v2.loops = (ushort)GetUint(v.value);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+				Console.Error.WriteLine("Parameter exception {0} (Probably wrong size)", e.Message);
+			}
+            return v2;
+		}
+
+        static uint GetUint(byte[] data)
+        {
+            switch (data.Length)
+            {
+                case 1:
+                    return data[0];
+                case 2:
+                    return BitConverter.ToUInt16(data, 0);
+                case 4:
+                    return BitConverter.ToUInt32(data, 0);
+            }
+            return 0;
+        }
+        static byte[] GetBinaryParams(InternalParams intpar, short version)
+        {
+            switch (version)
+            {
+                case 0:
+                    return BitConverter.GetBytes(0x00000000);
+                case 1:
+                    ParamsV1 v1 = GetParamsV1(intpar);
+                    byte[] bytes = new byte[32];
+                    BitConverter.GetBytes(v1.SeqNum).CopyTo(bytes, 0);
+					BitConverter.GetBytes(v1.Version).CopyTo(bytes, 2);
+					BitConverter.GetBytes(v1.MvolL).CopyTo(bytes, 4);
+					BitConverter.GetBytes(v1.MvolR).CopyTo(bytes, 6);
+					BitConverter.GetBytes(v1.VolL).CopyTo(bytes, 8);
+					BitConverter.GetBytes(v1.VolR).CopyTo(bytes, 10);
+					BitConverter.GetBytes(v1.RvolL).CopyTo(bytes, 12);
+					BitConverter.GetBytes(v1.RvolR).CopyTo(bytes, 14);
+					BitConverter.GetBytes(v1.RdepthL).CopyTo(bytes, 16);
+					BitConverter.GetBytes(v1.RdepthR).CopyTo(bytes, 18);
+					BitConverter.GetBytes(v1.Rdelay).CopyTo(bytes, 20);
+					BitConverter.GetBytes(v1.Rmode).CopyTo(bytes, 22);
+					BitConverter.GetBytes(v1.Rfeedback).CopyTo(bytes, 24);
+					BitConverter.GetBytes(v1.TickMode).CopyTo(bytes, 26);
+                    bytes[30] = v1.SeqFlags;
+                    bytes[31] = v1.SeqType;
+					return bytes;
+                case 2:
+                    ParamsV2 v2 = GetParamsV2(intpar);
+                    byte[] bytes1 = new byte[16];
+                    BitConverter.GetBytes(v2.SeqNum).CopyTo(bytes1, 0);
+					BitConverter.GetBytes(v2.Version).CopyTo(bytes1, 2);
+					BitConverter.GetBytes(v2.loops).CopyTo(bytes1, 4);
+					bytes1[6] = v2.rvol;
+                    bytes1[7] = v2.rdepth;
+					bytes1[8] = v2.rdelay;
+					bytes1[9] = v2.rtype;
+                    bytes1[10] = v2.rfeedback;
+                    bytes1[11] = v2.reserved; //v1.SeqType
+                    bytes1[12] = v2.mvol;
+                    bytes1[13] = v2.vol;
+					BitConverter.GetBytes(v2.tickmode).CopyTo(bytes1, 14);
+                    return bytes1;
+			}
+            return null;
+        }
+
+        static VFSFile[] GetVFSFiles(string dir, string pattern = "*.psf", short params_ver = 0, bool use_all_combinations = false,
             SearchOption so = SearchOption.AllDirectories, bool brute = false, bool verbose = false, bool use_largest_seq = false,
             bool strict = true, bool prioritize_info = true, TextWriter con = null)
         {
-            if (con == null)
-            {
-				con = Console.Out;
-			}
-
+            con ??= Console.Out;
 
 			List<SoundInfo> psffiles = new();
             Dictionary<string, int> vabmd5 = new(); //Value = Index in vabfiles
@@ -226,7 +739,7 @@ namespace PsfParamFinder
                 {
                     con.WriteLine("Loading {0}...", Path.GetFullPath(file));
 				}
-                SoundInfo info = GetSoundFiles(LoadFile(file), checkbrute: brute, prioritize_spec: strict, verbose: verbose, con: con);
+                SoundInfo info = GetSoundFiles(LoadFile(Path.GetFullPath(file)), checkbrute: brute, prioritize_spec: strict, verbose: verbose, con: con);
                 info.source_filename = Path.GetFullPath(file);
                 if (verbose)
                 {
@@ -293,7 +806,6 @@ namespace PsfParamFinder
 
 			for (int i = 0; i < psffiles.Count; i++)
 			{
-                //This is for editing the infos to disable or enable the SEQ files
                 int[] unique =
                 {
                     int.MaxValue,
@@ -322,45 +834,6 @@ namespace PsfParamFinder
                         {
                             unique[psffiles[i].seq[j].priority] = seqmd5[psffiles[i].seq[j].md5];
 						}
-                        /*
-                        if (psffiles[i].seq[j].is_sep && psffiles[i].seq[j].file_track == psffiles[i].sep_main_track)
-                        {
-                            if (psffiles[i].seq[j].seq_from_info && seqmd5[psffiles[i].seq[j].md5] < unique_sep_info)
-                            {
-                                unique_sep_info = seqmd5[psffiles[i].seq[j].md5];
-                                //psffiles[i].seq[j].priority = 3;
-
-								if (priority < 3)
-                                {
-                                    priority = 3; 
-                                }
-							}
-                            else if (seqmd5[psffiles[i].seq[j].md5] < unique_sep)
-                            {
-								unique_sep = seqmd5[psffiles[i].seq[j].md5];
-								if (priority < 2)
-								{
-									priority = 2;
-								}
-							}
-                        }
-                        else if (psffiles[i].seq[j].seq_from_info && seqmd5[psffiles[i].seq[j].md5] < unique_info)
-                        {
-                            unique_info = seqmd5[psffiles[i].seq[j].md5];
-							if (priority < 1)
-							{
-								priority = 1;
-							}
-						}
-                        else if (seqmd5[psffiles[i].seq[j].md5] < unique)
-                        {
-							unique_info = seqmd5[psffiles[i].seq[j].md5];
-							if (priority < 0)
-							{
-								priority = 0;
-							}
-						}
-                        */
                     }
 
                     priority = -1;
@@ -404,28 +877,35 @@ namespace PsfParamFinder
                     {
                         foreach (VabInfo vab in sound.vab)
                         {
-                            VFSFile file1 = new()
+                            if (!strict || !vab.vb_not_found) //add vab priority too for no duplicates?
                             {
-                                is_sep = seq.is_sep,
-                                params_ver = params_ver,
-                                use_params = true,
-                                int_params = sound.int_params,
-                                source = sound.source_filename,
-                                name = sound.name,
-                                file1_start = seq.seqstart,
-                                file1_end = seq.seqend,
-                                filetype = 0x01020000 + (uint)vabmd5[vab.md5]
-                            };
-                            if (tracknum > 1)
-                            {
-                                file1.name += " (" + tracknum + ")";
+                                VFSFile file1 = new()
+                                {
+                                    is_sep = seq.is_sep,
+                                    params_ver = params_ver,
+                                    use_params = true,
+                                    int_params = sound.int_params,
+                                    source = sound.source_filename,
+                                    name = sound.name,
+                                    file1_start = seq.seqstart,
+                                    file1_end = seq.seqend,
+                                    filetype = 0x01020000 + (uint)vabmd5[vab.md5]
+                                };
+                                if (tracknum > 1)
+                                {
+                                    file1.name += " (" + tracknum + ")";
+                                }
+                                tracknum++;
+                                vabfiles.Add(file1);
+                                if (verbose)
+                                {
+                                    con.WriteLine("Added SEQ file at pos #{0}, base VAB #{1}, track {2}, SEP: {3}",
+                                        vabfiles.Count - 1, vabmd5[vab.md5], file1.name, file1.is_sep);
+                                }
                             }
-                            tracknum++;
-                            vabfiles.Add(file1);
-                            if (verbose)
+                            else if (verbose)
                             {
-                                con.WriteLine("Added SEQ file at pos #{0}, base VAB #{1}, track {2}, SEP: {3}",
-                                    vabfiles.Count - 1, vabmd5[vab.md5], file1.name, file1.is_sep);
+                                con.WriteLine("VAB file skipped from {0}, {1}% correct", sound.name, vab.vbprob * 100);
                             }
                         }
                     }
@@ -456,10 +936,7 @@ namespace PsfParamFinder
 
             //int vabsize, vbsize, vhsize, vagsize, vagnum;
             List<int> clist = new();
-            if (con == null)
-            {
-                con = Console.Out;
-            }
+            con ??= Console.Out;
 
             if (!(ip == null || ip.blocks == null))
             {
@@ -978,10 +1455,7 @@ namespace PsfParamFinder
         }
         static int FindFile(byte[] ram, string magic, int start = 0, int[] candidates = null, bool reverse = false)
         {
-            if (candidates == null)
-            {
-                candidates = Array.Empty<int>();
-            }
+            candidates ??= Array.Empty<int>();
             //StreamReader sr = new StreamReader(ram, System.Text.Encoding.Latin1); //need correct byte length
             string mem = Encoding.Latin1.GetString(ram);
             byte[] bytes = Encoding.Latin1.GetBytes(magic);
@@ -1105,69 +1579,12 @@ namespace PsfParamFinder
 			return;
         }
 
-        static ParamsV1 DefaultParamsV1(ParamsV1 savepar_test)
-        {
-			savepar_test.SeqNum = 0;
-			savepar_test.Version = 1;
-			savepar_test.MvolL = 64;
-			savepar_test.MvolR = 64;
-			savepar_test.VolL = 64;
-			savepar_test.VolR = 64;
-			savepar_test.RvolL = 64;
-			savepar_test.RvolR = 64;
-			savepar_test.RdepthL = 64;
-			savepar_test.RdepthR = 64;
-			savepar_test.Rdelay = 64;
-			savepar_test.Rmode = 3;
-			savepar_test.Rfeedback = 64;
-			savepar_test.TickMode = 0x1000;
-			savepar_test.SeqFlags = (char)0x00;
-			savepar_test.SeqType = (char)0x00;
-            return savepar_test;
-		}
-
-        static bool SaveParamsV1(string arg, ParamsV1 savepar_test)
-        {
-            try
-            {
-                FileStream spar = File.OpenWrite(arg);
-                BinaryWriter nopointer = new(spar, Encoding.UTF8);
-                nopointer.Write(savepar_test.SeqNum);
-                nopointer.Write(savepar_test.Version);
-                nopointer.Write(savepar_test.MvolL);
-                nopointer.Write(savepar_test.MvolR);
-                nopointer.Write(savepar_test.VolL);
-                nopointer.Write(savepar_test.VolR);
-                nopointer.Write(savepar_test.RvolL);
-                nopointer.Write(savepar_test.RvolR);
-                nopointer.Write(savepar_test.RdepthL);
-                nopointer.Write(savepar_test.RdepthR);
-                nopointer.Write(savepar_test.Rdelay);
-                nopointer.Write(savepar_test.Rmode);
-                nopointer.Write(savepar_test.Rfeedback);
-                nopointer.Write(savepar_test.TickMode);
-                nopointer.Write(savepar_test.SeqFlags);
-                nopointer.Write(savepar_test.SeqType);
-                nopointer.Close();
-                spar.Close();
-                return true;
-            }
-            catch (Exception e)
-            {
-                Console.Error.WriteLine("{0} Parameter Write Error: {1}", arg, e.Message);
-            }
-			return false;
-		}
-
         static string[] SepCatalog(string dir, string ext = "*.exe", TextWriter con = null, SearchOption so = SearchOption.AllDirectories, 
             bool checksep = true, bool printparams = false)
         {
             HashSet<string> sepdirs = new();
             HashSet<string> sepparams = new();
-            if (con == null)
-            {
-                con = Console.Out;
-            }
+            con ??= Console.Out;
             foreach (string g in Directory.EnumerateFiles(dir, ext, so))
             {
                 PsfTable psf = LoadFile(Path.GetFullPath(g));
@@ -1189,11 +1606,11 @@ namespace PsfParamFinder
                     if (sep)
                     {
                         sepdirs.Add(Path.GetDirectoryName(g)); //only works when checking seps!
-                        InternalParams internalParams = Binvals(new MemoryStream(psf.ram));
+                        InternalParams internalParams = Binvals(new MemoryStream(psf.ram), true);
                         uint val = 0;
                         if (internalParams != null && internalParams.drivername != null)
                         {
-							con.WriteLine("{0}: {1}", g, internalParams.drivername);
+							con.WriteLine("{0}: {1}", Path.GetFullPath(g), internalParams.drivername);
 						}
                         if (internalParams != null)
                         {
@@ -1213,7 +1630,7 @@ namespace PsfParamFinder
                                         val = BitConverter.ToUInt32(pair.Value.value);
                                         break;
                                 }
-                                con.WriteLine("{0} - {1} ({2})", pair.Key, val, pair.Value.value.Length);
+                                con.WriteLine("{0} - {1}", pair.Key, val);
                             }
                         }
 						Console.WriteLine();
@@ -1230,7 +1647,8 @@ namespace PsfParamFinder
                 con.WriteLine();
                 con.WriteLine("***SEP FILE PARAMETERS***");
                 con.WriteLine();
-                foreach(string s in sepparams)
+                
+                foreach(string s in sepparams.OrderBy(x => x))
                 {
                     con.WriteLine(s);
                 }
@@ -1241,10 +1659,7 @@ namespace PsfParamFinder
         static void ParamsCatalog(string dir, StreamWriter outstream = null, string ext = "*.exe", bool allexe = true, bool sepout = true, bool drvout = true, bool paramout = true)
         {
             //StreamWriter con = new StreamWriter(outstream);
-            if (outstream == null)
-            {
-                outstream = new StreamWriter(Console.OpenStandardOutput());
-            }
+            outstream ??= new StreamWriter(Console.OpenStandardOutput());
             Dictionary<string, PsfParameter> psfParameters = new();
             Dictionary<string, InternalParams> psfDrivers = new();
             PsfParameter tp;
@@ -1262,7 +1677,7 @@ namespace PsfParamFinder
             }
             if (paramout)
             {
-                foreach (string k in psfParameters.Keys)
+                foreach (string k in psfParameters.Keys.OrderBy(x => x))
                 {
                     if (psfParameters.TryGetValue(k, out tp))
                     {
@@ -1276,7 +1691,7 @@ namespace PsfParamFinder
                 outstream.WriteLine("\n\n\n=====DRIVERS=====\n\n\n");
 
 
-                foreach (string l in psfDrivers.Keys)
+                foreach (string l in psfDrivers.Keys.OrderBy(x => x))
                 {
                     if (psfDrivers.TryGetValue(l, out td))
                     {
@@ -1307,7 +1722,7 @@ namespace PsfParamFinder
                 if (mem != null)
                 {
                     MemoryStream fstream = new(mem.ram);
-                    InternalParams testpar = Binvals(fstream);
+                    InternalParams testpar = Binvals(fstream, true);
                     string drvname;
                     if (testpar != null)
                     {
@@ -1336,7 +1751,7 @@ namespace PsfParamFinder
             return s[index..s.IndexOf('\0', index)];
         }
 
-        static string[] psflibs(BinaryReader br, int tagpos) //fix to match with spec - while loop?
+        static string[] Psflibs(BinaryReader br, int tagpos) //fix to match with spec - while loop?
         {
             try
             {
@@ -1412,7 +1827,7 @@ namespace PsfParamFinder
                 switch (ftype)
                 {
                     case 0x01465350: //PSF
-                        string[] pl = psflibs(br, -1);
+                        string[] pl = Psflibs(br, -1);
                         if (pl.Length > 0)
                         {
                             fs.Dispose();
@@ -1507,7 +1922,7 @@ namespace PsfParamFinder
                 int rsize = binary.ReadInt32();
                 int psize = binary.ReadInt32();
 
-                string[] libraries = psflibs(binary, 16 + psize + rsize);
+                string[] libraries = Psflibs(binary, 16 + psize + rsize);
                 foreach (string l in libraries)
                 {
                     LoadPsfFile(l, tab);
@@ -1517,7 +1932,7 @@ namespace PsfParamFinder
                 info.crc = binary.ReadUInt32();
                 info.modified = false;
                 info.reserved_area = binary.ReadBytes(rsize);
-                ZlibStream zlib = new ZlibStream(binary.BaseStream, CompressionMode.Decompress);
+                ZlibStream zlib = new(binary.BaseStream, CompressionMode.Decompress);
                 int bytesread = zlib.Read(tempram, 0, 0x200000);
 
                 binary.BaseStream.Seek(16 + psize + rsize, SeekOrigin.Begin);
@@ -1782,7 +2197,7 @@ namespace PsfParamFinder
             psf.ram = b.ReadBytes((int)b.BaseStream.Length);
             return psf;
         }
-        static InternalParams Binvals(Stream fs) //rewrite this without streams if you ever get around to it
+        static InternalParams Binvals(Stream fs, bool name_length = false) //rewrite this without streams if you ever get around to it
         {// assuming now that the segment is consistent
             try
             {
@@ -1835,7 +2250,14 @@ namespace PsfParamFinder
 				{ //potential 0 byte parameters as comments or something. but there could be a 0 length parameter as end
                     fs.Seek(param2, SeekOrigin.Begin);
                     PsfParameter pp = new(tparam2, tparam, br.ReadBytes(param3));
-                    ip.psfparams.Add(Nullterm(psfexe, (int)param), pp);
+                    if (name_length)
+                    {
+						ip.psfparams.Add(Nullterm(psfexe, (int)param) + " (" + pp.value.Length + ")", pp);
+					}
+                    else
+                    {
+						ip.psfparams.Add(Nullterm(psfexe, (int)param), pp);
+					}
                     fs.Seek(postemp, SeekOrigin.Begin);
                     tparam = br.ReadUInt32();
                     tparam2 = br.ReadUInt32();
@@ -1900,5 +2322,105 @@ namespace PsfParamFinder
             }
 			return true;
 		}
+
+        static string ParamsToJson(InternalParams ip)
+        {
+			JsonParams jp = new()
+			{
+				offset = ip.offset,
+				sig = ip.sig,
+				loadaddr = ip.loadaddr,
+				entrypoint = ip.entrypoint,
+				drivername = ip.drivername,
+				exename = ip.exename,
+				crc = ip.crc,
+				jumppatch = ip.jumppatch,
+				drivernameloc = ip.drivernameloc,
+				exenameloc = ip.exenameloc,
+				blocks = ip.blocks,
+				psfparams = new()
+			};
+            foreach (KeyValuePair<string, PsfParameter> kvp in ip.psfparams)
+            {
+				PsfParamExport export = new()
+				{
+					loc = kvp.Value.loc,
+					nameloc = kvp.Value.nameloc,
+					value_size = kvp.Value.value.Length
+				};
+                switch (export.value_size)
+                {
+                    case 1:
+                        export.value = kvp.Value.value[0];
+                        break;
+                    case 2:
+                        export.value = BitConverter.ToUInt16(kvp.Value.value);
+                        break;
+                    case 4:
+                        export.value = BitConverter.ToUInt32(kvp.Value.value);
+                        break;
+                }
+                jp.psfparams.Add(kvp.Key, export);
+			}
+
+			JsonSerializerOptions options = new(JsonSerializerDefaults.General)
+			{
+				WriteIndented = true,
+				IncludeFields = true
+			};
+
+			return JsonSerializer.Serialize(jp, options);
+        }
+
+        static InternalParams JsonToParams(string json)
+        {
+			JsonSerializerOptions options = new(JsonSerializerDefaults.General)
+			{
+				WriteIndented = true,
+				IncludeFields = true
+			};
+
+			JsonParams jp = JsonSerializer.Deserialize<JsonParams>(json, options);
+
+			InternalParams ip = new()
+			{
+				offset = jp.offset,
+				sig = jp.sig,
+				loadaddr = jp.loadaddr,
+				entrypoint = jp.entrypoint,
+				drivername = jp.drivername,
+				exename = jp.exename,
+				crc = jp.crc,
+				jumppatch = jp.jumppatch,
+				drivernameloc = jp.drivernameloc,
+				exenameloc = jp.exenameloc,
+				blocks = jp.blocks,
+				psfparams = new()
+			};
+            foreach (KeyValuePair<string, PsfParamExport> key in jp.psfparams)
+            {
+                PsfParameter import = new()
+				{
+					loc = key.Value.loc,
+					nameloc = key.Value.nameloc,
+                    value = new byte[key.Value.value_size]
+				};
+                switch (key.Value.value_size)
+                {
+                    case 1:
+                        import.value[0] = (byte)key.Value.value;
+                        break;
+                    case 2:
+                        import.value = BitConverter.GetBytes((ushort)key.Value.value);
+                        break;
+                    case 4:
+						import.value = BitConverter.GetBytes(key.Value.value);
+						break;
+				}
+                ip.psfparams.Add(key.Key, import);
+			}
+
+			return ip;
+        }
 	}
 }
