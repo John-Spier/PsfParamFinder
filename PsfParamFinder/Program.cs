@@ -210,14 +210,15 @@ namespace PsfParamFinder
     [Serializable]
     public struct VFSFile
     {
+        public bool load_direct;
         public string source;
         public string name;
-        public int file1_start;
+		public uint filetype;
+		public int file1_start;
 		public int file1_end;
 		public int file2_start;
 		public int file2_end;
         public bool use_params;
-        public uint filetype;
         public short params_ver;
         public bool is_sep;
         public InternalParams int_params;
@@ -234,6 +235,14 @@ namespace PsfParamFinder
         public int addr;
         public byte[] bin_params;
     }
+    [Serializable]
+    public struct VFSDirect
+    {
+		public bool load_direct;
+		public string source;
+		public string name;
+		public uint filetype;
+	}
 
     class Program
     {
@@ -245,14 +254,98 @@ namespace PsfParamFinder
                 IncludeFields = true
             };
 
-            VFSFile[] vs = JsonSerializer.Deserialize<VFSFile[]>(File.ReadAllText("TEST.JSON"), options);
+            //VFSFile[] vs = JsonSerializer.Deserialize<VFSFile[]>(File.ReadAllText("TEST.JSON"), options);
 
-            SaveVFSFile("test.vfs", vs);
+            //SaveVFSFile("test.vfs", vs);
 
             //SepCatalog(".\\EXE", checksep: false, printparams: true);
 
+            VFSFile[] vs = JsonSerializer.Deserialize<VFSFile[]>(GetVFSFromDir(".\\VAG"), options);
+            Console.WriteLine(JsonSerializer.Serialize(vs, options));
+            SaveVFSFile("VAG_TEST.VFS", vs);
+
             return;
 
+        }
+        static string GetVFSFromDir(string dir, string out_json = null, bool fullpaths = true, uint exestack = 0xFFFFFF13, bool allfiles = false)
+        {
+            List<VFSDirect> directs = new();
+            try
+            {
+                foreach (string f in Directory.EnumerateFiles(dir))
+                {
+                    VFSDirect direct = new()
+                    {
+                        load_direct = true,
+                        name = Path.GetFileNameWithoutExtension(f),
+                        source = Path.GetFullPath(f)
+                    };
+                    if (!fullpaths)
+                    {
+                        direct.source = Path.GetFileName(f);
+                    }
+
+                    switch (Path.GetExtension(f).ToLowerInvariant())
+                    {
+                        case ".hit":
+                            direct.filetype = 0xFFFFFF01;
+                            break;
+                        case ".pxm":
+                            direct.filetype = 0xFFFFFF02;
+                            break;
+                        case ".psq":
+                            direct.filetype = 0xFFFFFF03;
+                            break;
+                        case ".psp":
+                            direct.filetype = 0xFFFFFF04;
+                            break;
+                        case ".vag":
+                            direct.filetype = 0xFFFFFF05;
+                            break;
+                        case ".exe":
+                        case ".psx":
+                            direct.filetype = exestack; //0x801FFFF0 for compatibility
+                            break;
+                        case ".txt":
+                            direct.filetype = 0xFFFFFFFF;
+                            break;
+                        case ".vfs":
+                            direct.filetype = 0xFFFFFFFE;
+                            break;
+                    }
+                    if (allfiles || direct.filetype != 0)
+                    {
+                        directs.Add(direct);
+                    }
+
+                }
+            }
+            catch (Exception e)
+            {
+                Console.Error.WriteLine(e.ToString());
+            }
+
+
+			JsonSerializerOptions opts = new(JsonSerializerDefaults.General)
+			{
+				WriteIndented = true,
+				IncludeFields = true
+			};
+
+            string json = JsonSerializer.Serialize(directs, opts);
+
+			if (!string.IsNullOrEmpty(out_json))
+            {
+                try
+                {
+                    File.WriteAllText(out_json, json);
+                } 
+                catch (Exception jx) { 
+                    Console.Error.WriteLine(jx.Message);
+                }
+            }
+
+            return json;
         }
         static int GetPadding(int base_addr, int sector = 2048)
         {
@@ -276,7 +369,15 @@ namespace PsfParamFinder
 
             for (int i = 0; i < files.Length; i++)
             {
-                if (files[i].use_params)
+                if (files[i].load_direct)
+                {
+                    files[i].binary.size = (int)new FileInfo(files[i].source).Length;
+                    files[i].file1_start = 0;
+                    files[i].file1_end = files[i].binary.size;
+                    files[i].binary.file1_size = files[i].binary.size;
+                    files[i].binary.file2_size = 0;
+				}
+                else if (files[i].use_params)
                 {
                     files[i].binary.file1_size = files[i].file1_end - files[i].file1_start;
                     if (files[i].is_sep)
@@ -322,37 +423,47 @@ namespace PsfParamFinder
                 writer.Write(hfile.binary.addr);
                 writer.Write(hfile.filetype);
             }
+            writer.Write(new byte[base_pad]);
 
             foreach (VFSFile f in files)
             {
-                PsfTable table = LoadFile(f.source);
-                if (f.use_params)
+                if (f.load_direct)
                 {
-					writer.Write(0x004D5850); //PXM
-					writer.Write(2);
-					writer.Write(f.binary.file1_size); //size 1
-					writer.Write(8 + (2 * 8)); //addr 1
-                    writer.Write(f.binary.file2_size);
-					writer.Write(8 + (2 * 8) + f.binary.file1_size + GetPadding(f.binary.file1_size, 4)); //addr 2
-                    if (f.is_sep)
+                    byte[] direct_vfs = File.ReadAllBytes(f.source);
+                    writer.Write(direct_vfs);
+                    writer.Write(new byte[f.binary.padding]);
+                }
+                else
+                {
+                    PsfTable table = LoadFile(f.source);
+                    if (f.use_params)
                     {
-                        writer.Write(0x53455170); //pQES
-                        writer.Write(0x01000000); //SEQ Version 1 (big endian)
-                        writer.Write(table.ram, f.file1_start + 2, f.binary.file1_size - 8);
+                        writer.Write(0x004D5850); //PXM
+                        writer.Write(2);
+                        writer.Write(f.binary.file1_size); //size 1
+                        writer.Write(8 + (2 * 8)); //addr 1
+                        writer.Write(f.binary.file2_size);
+                        writer.Write(8 + (2 * 8) + f.binary.file1_size + GetPadding(f.binary.file1_size, 4)); //addr 2
+                        if (f.is_sep)
+                        {
+                            writer.Write(0x53455170); //pQES
+                            writer.Write(0x01000000); //SEQ Version 1 (big endian)
+                            writer.Write(table.ram, f.file1_start + 2, f.binary.file1_size - 8);
+                        }
+                        else
+                        {
+                            writer.Write(table.ram, f.file1_start, f.binary.file1_size);
+                        }
+                        writer.Write(new byte[GetPadding(f.binary.file1_size, 4)]);
+                        writer.Write(f.binary.bin_params);
+                        writer.Write(new byte[GetPadding(f.binary.file2_size, 4)]);
                     }
                     else
                     {
-						writer.Write(table.ram, f.file1_start, f.binary.file1_size);
-					}
-					writer.Write(new byte[GetPadding(f.binary.file1_size, 4)]);
-                    writer.Write(f.binary.bin_params);
-                    writer.Write(new byte[GetPadding(f.binary.file2_size, 4)]);
-				}
-                else
-                {
-                    writer.Write(table.ram, f.file1_start, f.binary.file1_size);
-					writer.Write(table.ram, f.file2_start, f.binary.file2_size);
-				}
+                        writer.Write(table.ram, f.file1_start, f.binary.file1_size);
+                        writer.Write(table.ram, f.file2_start, f.binary.file2_size);
+                    }
+                }
             }
             writer.Flush();
             writer.Close();
@@ -818,7 +929,8 @@ namespace PsfParamFinder
 							file2_start = vi.vbstart,
 							file2_end = vi.vbend,
                             is_sep = false,
-							filetype = 0xFFFFFF0F //VAB
+							filetype = 0xFFFFFF0F, //VAB
+                            load_direct = false
 						};
                         if (verbose)
                         {
@@ -944,7 +1056,8 @@ namespace PsfParamFinder
                                     name = sound.name,
                                     file1_start = seq.seqstart,
                                     file1_end = seq.seqend,
-                                    filetype = 0x01020000 + (uint)vabmd5[vab.md5]
+                                    filetype = 0x01020000 + (uint)vabmd5[vab.md5],
+                                    load_direct = false
                                 };
                                 if (tracknum > 1)
                                 {
