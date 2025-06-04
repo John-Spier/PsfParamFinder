@@ -10,7 +10,6 @@ using System.Linq;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text.Json;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 
 //using System.Runtime.Serialization.Formatters.Binary;
@@ -484,7 +483,8 @@ namespace PsfParamFinder
                             }
                             else if (options.Contains('v'))
                             {
-                                SaveVFSFile(args[a], files);
+								encout = GetEncodingOut(options);
+								SaveVFSFile(args[a], files, encout);
                             }
 							if (options.Contains('y'))
 							{
@@ -704,7 +704,7 @@ namespace PsfParamFinder
 								a = 2;
 								options = args[1][2..];
 							}
-							else if (args.Length > 2)
+							else if (args.Length > 1)
 							{
 								a = 1;
 							}
@@ -941,19 +941,19 @@ namespace PsfParamFinder
 										Array.ForEach(GetOptions("JFDjvdynNqwcaDMPE210usbtlriH"), Console.WriteLine);
 										return;
 									case "-e":
-										Console.WriteLine("PSF JSON paramaeter exporter");
+										Console.WriteLine("PSF JSON paramater exporter");
 										Console.WriteLine($"Usage: {appname} -i [-o:options] psf outjson");
 										Console.WriteLine("-o Options:");
 										Array.ForEach(GetOptions("EPM^&*("), Console.WriteLine);
 										return;
 									case "-i":
-										Console.WriteLine("PSF JSON paramaeter importer");
+										Console.WriteLine("PSF JSON paramater importer");
 										Console.WriteLine($"Usage: {appname} -i [-o:options] psf json [outpsf]...");
 										Console.WriteLine("-o Options:");
 										Array.ForEach(GetOptions("+EPMhepm6789^&*("), Console.WriteLine);
 										return;
 									case "-l":
-										Console.WriteLine("PSF director property logger");
+										Console.WriteLine("PSF directory property logger");
 										Console.WriteLine($"Usage: {appname} -l [-o:options] dir [logfile]");
 										Console.WriteLine("-o Options:");
 										Array.ForEach(GetOptions("EPMASBCIsy"), Console.WriteLine);
@@ -1687,8 +1687,9 @@ namespace PsfParamFinder
                 return base_pad;
             }
         }
-        static void SaveVFSFile(string filename, VFSFile[] files)
+        static void SaveVFSFile(string filename, VFSFile[] files, Encoding encout = null)
         {
+            encout ??= Encoding.ASCII;
             BinaryWriter writer = new(new FileStream(filename, FileMode.Create));
             int base_addr = 12 + (files.Length * 84);
             int base_pad = GetPadding(base_addr);
@@ -1725,8 +1726,21 @@ namespace PsfParamFinder
                 }
 
                 files[i].binary.name = new byte[64];
-                int namesize = int.Min(files[i].name.Length, 63);
-				Encoding.ASCII.GetBytes(files[i].name, 0, namesize, files[i].binary.name, 0);
+                int charsize;
+                switch (encout.WebName)
+                {
+                    case "utf-8":
+                        charsize = 15;
+                        break;
+                    case "shift_jis":
+                        charsize = 31;
+                        break;
+                    default: //ascii and latin 1
+                        charsize = 63;
+                        break;
+                }
+                int namesize = int.Min(files[i].name.Length, charsize);
+				encout.GetBytes(files[i].name, 0, namesize, files[i].binary.name, 0);
                 files[i].binary.addr = addr;
                 files[i].binary.padding = GetPadding(files[i].binary.size);
                 addr += files[i].binary.size + files[i].binary.padding;
@@ -2976,12 +2990,21 @@ namespace PsfParamFinder
                     }
                 }
             }
+            int index;
             if (reverse)
             {
-                return enc.GetByteCount(mem, 0, mem.LastIndexOf(magic, start, StringComparison.Ordinal));
+                index = mem.LastIndexOf(magic, start, StringComparison.Ordinal);
+			}
+            else
+            {
+                index = mem.IndexOf(magic, start, StringComparison.Ordinal);
+			} 
+            if (index < 0)
+            {
+                return -1;
             }
-            return enc.GetByteCount(mem, 0, mem.IndexOf(magic, start, StringComparison.Ordinal));
-        }
+			return enc.GetByteCount(mem, 0, index);
+		}
 
         static string GetMD5(byte[] ram, int start = 0, int end = -1)
         {
@@ -3122,7 +3145,7 @@ namespace PsfParamFinder
                     hLayer = -1;
                     for (int i = 0; i < layers.Count; i++)
                     {
-                        if (layers[(uint)i] == true)
+                        if (layers[(uint)i])
                         {
                             hLayer = int.Max(i, hLayer);
                         }
@@ -4021,7 +4044,7 @@ namespace PsfParamFinder
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("Parameter Name Eddit Error: {0}", ex.Message);
+                Console.Error.WriteLine("Parameter Name Edit Error: {0}", ex.Message);
                 return 0;
             }
             return (uint)bytes.Length;
