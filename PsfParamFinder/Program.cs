@@ -2397,7 +2397,7 @@ namespace PsfParamFinder
 				}
 			}
 			foreach (SoundInfo sound in psffiles)
-			{
+			 {
 				int tracknum = 1;
 				foreach (SeqInfo seq in sound.seq)
 				{
@@ -2589,15 +2589,25 @@ namespace PsfParamFinder
 						}
 						if (seqInfo.seqend > -1)
 						{
-                            seqInfo.md5 = GetMD5(table.ram, seqInfo.seqstart + 8, seqInfo.seqend);
-                            seqInfo.seq_from_info = seq_from_params;
-                            seqInfo.enabled = false;
-                            seqInfo.priority = 0;
-                            if (seq_from_params)
+                            try
                             {
-                                seqInfo.priority++;
+                                seqInfo.md5 = GetMD5(table.ram, seqInfo.seqstart + 8, seqInfo.seqend);
+								seqInfo.seq_from_info = seq_from_params;
+								seqInfo.enabled = false;
+								seqInfo.priority = 0;
+								if (seq_from_params)
+								{
+									seqInfo.priority++;
+								}
+								seqs.Add(seqInfo);
+							}
+                            catch (Exception e)
+                            {
+                                if (verbose)
+                                {
+                                    con.WriteLine("MD5 error {0} for SEQ at {1}", e.Message, seqInfo.seqstart);
+                                }
                             }
-							seqs.Add(seqInfo);
 						}
 					}
 					else
@@ -2693,12 +2703,31 @@ namespace PsfParamFinder
 					vh.vh_size = 0x20 + 0x800 + 0x200 + (BitConverter.ToInt16(table.ram, vh.vh + 18) * 0x200);
                     vh.vb_size = BitConverter.ToInt32(table.ram, vh.vh + 12) - vh.vh_size;
 					vh.vagnum = BitConverter.ToInt16(table.ram, vh.vh + 22);
-
-					vh.vags = new int[vh.vagnum];
+                    try
+                    {
+                        vh.vags = new int[vh.vagnum];
+                    }
+                    catch (Exception e)
+                    {
+                        if (verbose)
+                        {
+                            con.WriteLine("VAG number {0} exception error: {1}", vh.vagnum, e.Message);
+                        }
+                    }
 					for (int i = 0; i < vh.vagnum; i++)
 					{
-						vh.vags[i] = BitConverter.ToUInt16(table.ram, vh.vh + vh.vh_size - 0x1FE + (i * 2)) * 8;
-						vh.vag_size += vh.vags[i];
+                        try
+                        {
+                            vh.vags[i] = BitConverter.ToUInt16(table.ram, vh.vh + vh.vh_size - 0x1FE + (i * 2)) * 8;
+                            vh.vag_size += vh.vags[i];
+                        }
+                        catch (Exception e)
+                        {
+                            if (verbose)
+                            {
+                                con.WriteLine("VAG Exception: {0}", e.Message);
+                            }
+                        }
 					}
                     if (!strict_size || (vh.vb_size == vh.vag_size))
                     {
@@ -2884,10 +2913,18 @@ namespace PsfParamFinder
                     vab.vb_not_found = (k.vagnum * multiplier) - best <= vb_correct_needed;
                 }
 
-                vab.md5 = GetMD5([.. table.ram[vab.vhstart..vab.vhend], .. table.ram[vab.vbstart..vab.vbend]]);
-
-
-				vi.Add(vab);
+                try
+                {
+                    vab.md5 = GetMD5([.. table.ram[vab.vhstart..vab.vhend], .. table.ram[vab.vbstart..vab.vbend]]);
+                    vi.Add(vab);
+                }
+                catch (Exception ex)
+                {
+                    if (verbose)
+                    {
+                        con.WriteLine("VAB {0} failed due to {1}", vi.Count, ex.Message);
+                    }
+                }
             }
             si.vab = [.. vi];
 
