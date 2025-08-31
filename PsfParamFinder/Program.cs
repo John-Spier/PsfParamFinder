@@ -1031,7 +1031,7 @@ namespace PsfParamFinder
             Console.WriteLine($"{helpname} Command Line Options:");
             Console.WriteLine("-f: Convert PSF format/add tags");
             Console.WriteLine("-p: Create VFS (PQSF)/JSON/Directory for PSF2CSV from PSF set");
-            Console.WriteLine("-e: Export PSF_DRIVER_INFO block and and strings to JSON");
+            Console.WriteLine("-e: Export PSF_DRIVER_INFO block and strings to JSON");
             Console.WriteLine("-i: Import PSF_DRIVER_INFO and optionally string table from JSON");
             Console.WriteLine("-l: Print all parameters from PSF set/sets");
             Console.WriteLine("-x: Extract SEQ/VH/VB/SEP/parameters from single MiniPSFPSF/PSF/EXE file");
@@ -1775,11 +1775,13 @@ namespace PsfParamFinder
                     {
                         writer.Write(0x004D5850); //PXM
                         writer.Write(2);
-                        writer.Write(f.binary.file1_size); //size 1
+                       
                         writer.Write(8 + (2 * 8)); //addr 1
-                        writer.Write(f.binary.file2_size);
+						writer.Write(f.binary.file1_size); //size 1
+						
                         writer.Write(8 + (2 * 8) + f.binary.file1_size + GetPadding(f.binary.file1_size, 4)); //addr 2
-                        if (f.is_sep)
+						writer.Write(f.binary.file2_size);
+						if (f.is_sep)
                         {
                             writer.Write(0x53455170); //pQES
                             writer.Write(0x01000000); //SEQ Version 1 (big endian)
