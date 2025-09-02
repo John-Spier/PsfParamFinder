@@ -489,7 +489,7 @@ namespace PsfParamFinder
 							if (options.Contains('y'))
 							{
 								con.Flush();
-								con.Dispose();
+								//con.Dispose();
 							}
 							return;
                         case "-e": //EXPORT PARAMETERS
@@ -695,7 +695,7 @@ namespace PsfParamFinder
                             if (options.Contains('y'))
                             {
                                 con.Flush();
-                                con.Dispose();
+                                //con.Dispose();
                             }
 							return;
                         case "-x": //EXTRACT FILES FROM SINGLE PSF/EXE
@@ -789,7 +789,7 @@ namespace PsfParamFinder
 							if (options.Contains('y'))
 							{
 								con.Flush();
-								con.Dispose();
+								//con.Dispose();
 							}
 							return;
                         case "-r": //CREATE OR REBASE SINGLE MINIPSF
@@ -860,7 +860,7 @@ namespace PsfParamFinder
 							if (options.Contains('y'))
 							{
 								con.Flush();
-								con.Dispose();
+								//con.Dispose();
 							}
 							return;
                         case "-m": //CREATE MINIPSF DIR
@@ -918,7 +918,7 @@ namespace PsfParamFinder
 							if (options.Contains('y'))
 							{
 								con.Flush();
-								con.Dispose();
+								//con.Dispose();
 							}
 							return;
                         case "-h": //HELP
@@ -1021,6 +1021,7 @@ namespace PsfParamFinder
                         default:
                             break;
                     }
+                    con.Dispose();
                 }
             }
             catch (Exception ex)
@@ -2447,7 +2448,7 @@ namespace PsfParamFinder
 				}
 			}
             con.Flush();
-            con.Dispose();
+            //con.Dispose();
 			return [.. vabfiles];
         }
 
