@@ -10,6 +10,8 @@ using System.Linq;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.IO.Enumeration;
+using System.Data.SqlTypes;
 
 
 //using System.Runtime.Serialization.Formatters.Binary;
@@ -21,6 +23,14 @@ namespace PsfParamFinder
         EXE,
         PSF,
         MINIPSF
+    }
+    public enum VgmtTypes
+    {
+        SEQ,
+        SEP,
+        VH,
+        VB,
+        OTHER
     }
 	[Serializable]
 	public class PsfFile
@@ -165,6 +175,7 @@ namespace PsfParamFinder
         public int sep_file;
         public int file_track;
         public bool seq_from_info;
+        public bool seq_from_vgmt;
         public bool enabled;
         public int priority;
         public string md5;
@@ -175,6 +186,7 @@ namespace PsfParamFinder
         public int sepstart;
         public int sepend;
 		public bool sep_from_info;
+        public bool seq_from_vgmt;
 		public string md5;
 	}
     [Serializable]
@@ -188,6 +200,8 @@ namespace PsfParamFinder
 		public bool vh_from_info;
 		public bool vb_from_info;
         public bool vb_not_found;
+        public bool vh_from_vgmt;
+        public bool vb_from_vgmt;
 		public string md5;
 	}
     [Serializable]
@@ -200,6 +214,7 @@ namespace PsfParamFinder
         public int vb_size;
         public int vag_size;
         public bool vh_from_info;
+        public bool vh_from_vgmt;
     }
 
 	[Serializable]
@@ -250,6 +265,15 @@ namespace PsfParamFinder
 		public string name;
 		public uint filetype;
 	}
+    [Serializable]
+    public struct VgmtFile
+    {
+        public VgmtTypes type; //extension
+        public int fnum; //_00XX from filename
+        public string filename; //full name
+        public int addr;
+        public int length;
+    }
 
     class Program
     {
@@ -285,6 +309,7 @@ namespace PsfParamFinder
                     bool fnfile = false;
                     bool export_params = true;
                     bool padend = false;
+                    bool search_vgmt = true;
 					switch (args[0].ToLowerInvariant())
                     {
                         case "-f": //CONVERT FORMAT/TAGGER
@@ -406,6 +431,7 @@ namespace PsfParamFinder
                             fndir = !options.Contains('n');
                             fnfile = options.Contains('N');
                             export_params = !options.Contains('q');
+                            search_vgmt = !options.Contains('~');
 							if (options.Contains('J'))
                             {
                                 files = JsonSerializer.Deserialize<VFSFile[]>(File.ReadAllText(args[a - 1]), joptions);
@@ -737,7 +763,7 @@ namespace PsfParamFinder
                             bool useprob = false;
                             bool checkends = false;
                             bool checkvab = true;
-
+                            string vgmt = null;
                             allvab = !options.Contains('H');
                             allseq = options.Contains('L');
                             sep = options.Contains('R');
@@ -750,6 +776,11 @@ namespace PsfParamFinder
                             searchall = !options.Contains('Y');
                             checkends = options.Contains('k');
                             checkvab = !options.Contains('K');
+							//search_vgmt = !options.Contains('~');
+                            if (!options.Contains('~'))
+                            {
+                                vgmt = FindVgmtFile(Path.GetFullPath(args[a]));
+                            }
 							if (options.Contains('2'))
 							{
 								params_ver = 2;
@@ -784,7 +815,8 @@ namespace PsfParamFinder
                             {
                                 basename = args.Last();
                             }
-                            SoundInfo s = GetSoundFiles(conv, checkall, verbose, brute, strict, vabp, seqp, searchall, correct, checkends, useprob, checkvab, con, encoding);
+                            SoundInfo s = GetSoundFiles(conv, checkall, verbose, brute, strict, vabp, seqp, searchall, correct, checkends, useprob, checkvab, con, encoding,
+								GetVgmtFiles(vgmt, strict, verbose, con, encoding));
                             ExtractFiles(s, conv.ram, args[(a + 1) ..], allseq, sep, allvab, params_ver, basename);
 							if (options.Contains('y'))
 							{
@@ -930,7 +962,7 @@ namespace PsfParamFinder
                                 {
 									case "-f":
 										Console.WriteLine("PSF format converter/tagger");
-										Console.WriteLine($"Usage: {appname} -p [-o:options] minipsf/psf/exe outminipsf/outpsf/outexe [tag=value] [tag2=value2]...");
+										Console.WriteLine($"Usage: {appname} -f [-o:options] minipsf/psf/exe outminipsf/outpsf/outexe [tag=value] [tag2=value2]...");
 										Console.WriteLine("-o Options:");
 										Array.ForEach(GetOptions("+EPM)!@epm6789^&*("), Console.WriteLine);
 										return;
@@ -942,7 +974,7 @@ namespace PsfParamFinder
 										return;
 									case "-e":
 										Console.WriteLine("PSF JSON paramater exporter");
-										Console.WriteLine($"Usage: {appname} -i [-o:options] psf outjson");
+										Console.WriteLine($"Usage: {appname} -e [-o:options] psf outjson");
 										Console.WriteLine("-o Options:");
 										Array.ForEach(GetOptions("EPM^&*("), Console.WriteLine);
 										return;
@@ -1042,6 +1074,126 @@ namespace PsfParamFinder
             Console.WriteLine($"-h: Show a help message when followed by any other option (example: {helpname} -h -f)");
 			return;
 
+        }
+        static VgmtFile[] GetVgmtFiles(string path, bool check_type, bool verbose, StreamWriter con = null, Encoding enc = null)
+        {
+            if (path == null)
+            {
+                return [];
+            }
+            enc ??= Encoding.UTF8;
+            con ??= new(Console.OpenStandardOutput());
+            con.AutoFlush = true;
+            List<VgmtFile> files = [];
+			try
+            {
+				bool is_bat = false;
+				if (Path.GetExtension(path) == ".bat")
+                {
+                    is_bat = true;
+                }
+                string[] strings = File.ReadAllLines(path, enc);
+                if (check_type)
+                {
+					if (strings[0][..13] == "snakebite.exe")
+                    {
+                        is_bat = true;
+                    }
+                    else
+                    {
+                        is_bat = false;
+                    }
+                }
+                if (is_bat)
+                {
+                    foreach (string s in strings)
+                    {
+                        try
+                        {
+                            string[] batstr = s.Split('"', StringSplitOptions.TrimEntries);
+                            string[] hexstr = batstr[4].Split(' ');
+                            files.Add(new()
+                            {
+                                filename = Path.GetFileName(batstr[3]),
+                                type = Path.GetExtension(batstr[3]).ToLowerInvariant() switch
+                                {
+                                    ".seq" => VgmtTypes.SEQ,
+                                    ".sep" => VgmtTypes.SEP,
+                                    ".vh" => VgmtTypes.VH,
+                                    ".vb" => VgmtTypes.VB,
+                                    _ => VgmtTypes.OTHER
+                                },
+                                addr = Convert.ToInt32(hexstr[0], 16),
+                                length = Convert.ToInt32(hexstr[1], 16) - Convert.ToInt32(hexstr[0], 16) + 1,
+                                fnum = int.Parse(Path.GetFileNameWithoutExtension(batstr[3])[^4..], System.Globalization.NumberStyles.HexNumber)
+                            });
+                        }
+						catch (Exception bx)
+						{
+							if (verbose)
+							{
+								con.WriteLine("VGMToolbox Exception: {0}", bx.ToString());
+							}
+						}
+					}
+                }
+                else
+                {
+                    foreach (string s in strings.Skip(1))
+                    {
+                        try
+                        {
+                            string[] txtstr = s.Split(':', 4, StringSplitOptions.TrimEntries);
+                            files.Add(new()
+                            {
+                                filename = txtstr[3],
+                                type = Path.GetExtension(txtstr[3]).ToLowerInvariant() switch
+                                {
+                                    ".seq" => VgmtTypes.SEQ,
+                                    ".sep" => VgmtTypes.SEP,
+                                    ".vh" => VgmtTypes.VH,
+                                    ".vb" => VgmtTypes.VB,
+                                    _ => VgmtTypes.OTHER
+                                },
+                                addr = Convert.ToInt32(txtstr[1].Split(' ')[0], 16),
+                                length = Convert.ToInt32(txtstr[2].Split(' ')[0], 16),
+                                fnum = int.Parse(Path.GetFileNameWithoutExtension(txtstr[3])[^4..], System.Globalization.NumberStyles.HexNumber)
+                            });
+                        }
+						catch (Exception yx)
+						{
+							if (verbose)
+							{
+								con.WriteLine("VGMToolbox Exception: {0}", yx.ToString());
+							}
+						}
+					}
+                }
+            }
+            catch (Exception vx)
+            {
+                if (verbose)
+                {
+                    con.WriteLine("VGMToolbox Exception: {0}", vx.ToString());
+                }
+            }
+            return [.. files];
+        }
+        static string FindVgmtFile(string filepath)
+        {
+            string basepath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(filepath)),
+                Path.GetFileNameWithoutExtension(Path.GetFullPath(filepath)),
+                "vgmt_extraction_log");
+
+			if (File.Exists(basepath + ".txt"))
+            {
+                return basepath + ".txt";
+            }
+            if (File.Exists(basepath + ".bat"))
+            {
+                return basepath + ".bat";
+            }
+            return null;
         }
         static string[] GetOptions(string arg)
         {
@@ -2241,7 +2393,8 @@ namespace PsfParamFinder
 
         static VFSFile[] GetVFSFiles(string dir, string pattern = "*.psf", short params_ver = 0, bool use_all_combinations = false,
             SearchOption so = SearchOption.AllDirectories, bool brute = false, bool verbose = false, bool use_largest_seq = false,
-            bool strict = true, bool prioritize_info = true, StreamWriter con = null, Encoding enc = null, bool allvabs = false)
+            bool strict = true, bool prioritize_info = true, StreamWriter con = null, Encoding enc = null, bool allvabs = false,
+            bool vgmt = true)
         {
             con ??= new(Console.OpenStandardOutput());
 			con.AutoFlush = true;
@@ -2265,7 +2418,14 @@ namespace PsfParamFinder
                 {
                     con.WriteLine("Loading {0}...", Path.GetFullPath(file));
 				}
-                SoundInfo info = GetSoundFiles(LoadFile(Path.GetFullPath(file), enc: enc), checkbrute: brute, prioritize_spec: strict, verbose: verbose, con: con, enc: enc);
+                string vgmtfile = null;
+                if (vgmt)
+                {
+                    vgmtfile = FindVgmtFile(Path.GetFullPath(file));
+                }
+                SoundInfo info = GetSoundFiles(LoadFile(Path.GetFullPath(file), enc: enc), 
+                    checkbrute: brute, prioritize_spec: strict, verbose: verbose, con: con, enc: enc,
+                    vgmt: GetVgmtFiles(vgmtfile, strict, verbose, con, enc));
                 info.source_filename = Path.GetFullPath(file);
                 if (verbose)
                 {
@@ -2343,8 +2503,12 @@ namespace PsfParamFinder
                     int.MaxValue,
                     int.MaxValue,
                     int.MaxValue,
-                    int.MaxValue
-                ];
+                    int.MaxValue,
+					int.MaxValue,
+					int.MaxValue,
+					int.MaxValue,
+					int.MaxValue
+				];
 				if (use_all_combinations)
                 {
                     for (int j = 0; j < psffiles[i].seq.Length; j++)
@@ -2455,7 +2619,7 @@ namespace PsfParamFinder
         static SoundInfo GetSoundFiles(PsfTable table, bool checkall = true, bool verbose = false, bool checkbrute = false, 
             bool prioritize_spec = true, bool allow_vabp = false, bool allow_seqp = true, bool seq_vh_search_all = true, 
             decimal vb_correct_needed = (decimal)1, bool check_sample_ends = false, bool use_probability = false, 
-            bool check_vab = true, StreamWriter con = null, Encoding enc = null)
+            bool check_vab = true, StreamWriter con = null, Encoding enc = null, VgmtFile[] vgmt = null)
         {
             
             MemoryStream rampar = new(table.ram);
@@ -2472,6 +2636,7 @@ namespace PsfParamFinder
             List<int> clist = [];
             con ??= new(Console.OpenStandardOutput());
 			con.AutoFlush = true;
+            vgmt ??= [];
 			//enc ??= Encoding.UTF8;
 
 			if (!(ip == null || ip.blocks == null))
@@ -2536,8 +2701,58 @@ namespace PsfParamFinder
             int param_num = pcandidates.Length;
 			List<SeqInfo> seqs = [];
 			List<SepInfo> seps = [];
+            foreach (VgmtFile v in vgmt.Where(x => x.type == VgmtTypes.SEQ))
+            {
+                try
+                {
+                    seqs.Add(new()
+                    {
+                        is_sep = false,
+                        seq_from_info = false,
+                        seq_from_vgmt = true,
+                        enabled = false,
+                        priority = 4,
+                        seqstart = v.addr,
+                        seqend = v.addr + v.length,
+                        md5 = GetMD5(table.ram, v.addr + 8, v.addr + v.length)
+                    });
+                }
+				catch (Exception e)
+				{
+					if (verbose)
+					{
+						con.WriteLine("MD5 error {0} for VGMT SEQ {1}", e.Message, v.filename);
+					}
+				}
+			}
 
-            bool seqp = false;
+			foreach (VgmtFile v in vgmt.Where(x => x.type == VgmtTypes.SEP))
+            {
+                try
+                {
+                    int oldcount = seqs.Count;
+                    seqs.AddRange(CountSepTracks(table.ram, v.addr, prioritize_spec, seps.Count, false, si.sep_main_track, true));
+                    //if (seqs.Count > oldcount)
+                    //{
+                    seps.Add(new()
+                    {
+                        sepstart = v.addr,
+                        sepend = v.addr + v.length,
+                        seq_from_vgmt = true,
+                        md5 = GetMD5(table.ram, v.addr, v.addr + v.length)
+                    });
+                    //}
+                }
+				catch (Exception e)
+				{
+					if (verbose)
+					{
+						con.WriteLine("MD5 error {0} for VGMT SEP {1}", e.Message, v.filename);
+					}
+				}
+			}
+
+			bool seqp = false;
             bool seq_from_params = true;
 
             List<int> seqfiles = [];
@@ -2596,6 +2811,7 @@ namespace PsfParamFinder
                             {
                                 seqInfo.md5 = GetMD5(table.ram, seqInfo.seqstart + 8, seqInfo.seqend);
 								seqInfo.seq_from_info = seq_from_params;
+                                seqInfo.seq_from_vgmt = false;
 								seqInfo.enabled = false;
 								seqInfo.priority = 0;
 								if (seq_from_params)
@@ -2839,6 +3055,66 @@ namespace PsfParamFinder
 			}
 
             List<VabInfo> vi = [];
+            foreach (VgmtFile v in vgmt.Where(x => x.type == VgmtTypes.VH))
+            {
+                try
+                {
+                    VgmtFile w = vgmt.First(x => x.type == VgmtTypes.VB && x.fnum == v.fnum);
+                    try
+                    {
+                        int vihstart = v.addr + v.length;
+                        int vibstart = w.addr + w.length;
+						vi.Add(new()
+                        {
+                            vhstart = v.addr,
+                            vhend = vihstart,
+                            vbstart = w.addr,
+                            vbend = vibstart,
+                            vbprob = 1,
+                            vb_from_info = false,
+                            vh_from_info = false,
+                            vb_from_vgmt = true,
+                            vh_from_vgmt = true,
+                            vb_not_found = false,
+                            md5 = GetMD5([.. table.ram[v.addr..vihstart], .. table.ram[w.addr..vibstart]])
+                        });
+                    }
+                    catch (Exception e)
+                    {
+						con.WriteLine("MD5 error {0} for VGMT VH/VB {1}", e.Message, v.filename);
+					}
+                }
+                catch
+                {
+                    try
+                    {
+                        short vagn = BitConverter.ToInt16(table.ram, v.addr + 22);
+                        int[] newvags = new int[vagn];
+                        int sizevag = 0;
+                        for (int i = 0; i < vagn; i++)
+                        {
+                            newvags[i] = BitConverter.ToUInt16(table.ram, v.addr + v.length - 0x1FE + (i * 2)) * 8;
+                            sizevag += newvags[i];
+                        }
+						vagfiles.Add(new()
+                        {
+                            vh_from_info = false,
+                            vh_from_vgmt = true,
+                            vh = v.addr,
+                            vh_size = v.length,
+                            vb_size = BitConverter.ToInt32(table.ram, v.addr + 12) - v.length,
+                            vagnum = vagn,
+                            vags = newvags,
+                            vag_size = sizevag
+                        });
+                    }
+					catch (Exception e)
+					{
+						con.WriteLine("Error {0} for VGMT VH {1}", e.Message, v.filename);
+					}
+				}
+            }
+
             foreach (VhInfo k in vagfiles)
             {
                 int correct;
@@ -2897,6 +3173,7 @@ namespace PsfParamFinder
                 vab.vbstart = candidates[guess];
                 vab.vbend = vab.vbstart + k.vag_size;
                 vab.vh_from_info = k.vh_from_info;
+                vab.vh_from_vgmt = k.vh_from_vgmt;
 
                 int multiplier = 1;
 
@@ -2940,7 +3217,7 @@ namespace PsfParamFinder
 			return si;
         }
 
-        static SeqInfo[] CountSepTracks(byte[] mem, int index = 0, bool strict = true, int sep_file = -1, bool from_info = false, int main_track = -1)
+        static SeqInfo[] CountSepTracks(byte[] mem, int index = 0, bool strict = true, int sep_file = -1, bool from_info = false, int main_track = -1, bool from_vgmt = false)
 		{
             //string ram = Encoding.Latin1.GetString(mem);
             int loc = index + 6;
@@ -2991,6 +3268,7 @@ namespace PsfParamFinder
                     s.md5 = GetMD5(mem, s.seqstart + 2, s.seqend);
                     s.enabled = false;
                     s.seq_from_info = from_info;
+                    s.seq_from_vgmt = from_vgmt;
                     s.priority = 0;
                     if (from_info)
                     {
@@ -2999,6 +3277,10 @@ namespace PsfParamFinder
                     if (s.file_track == main_track)
                     {
                         s.priority += 2;
+                    }
+                    if (from_vgmt)
+                    {
+                        s.priority += 4;
                     }
 					list.Add(s);
 				}
