@@ -10,8 +10,6 @@ using System.Linq;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text.Json;
-using System.IO.Enumeration;
-using System.Data.SqlTypes;
 
 
 //using System.Runtime.Serialization.Formatters.Binary;
