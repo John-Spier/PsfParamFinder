@@ -307,7 +307,6 @@ namespace PsfParamFinder
                     bool fnfile = false;
                     bool export_params = true;
                     bool padend = false;
-                    bool search_vgmt = true;
 					switch (args[0].ToLowerInvariant())
                     {
                         case "-f": //CONVERT FORMAT/TAGGER
@@ -429,7 +428,7 @@ namespace PsfParamFinder
                             fndir = !options.Contains('n');
                             fnfile = options.Contains('N');
                             export_params = !options.Contains('q');
-                            search_vgmt = !options.Contains('~');
+                            bool search_vgmt = !options.Contains('~');
 							if (options.Contains('J'))
                             {
                                 files = JsonSerializer.Deserialize<VFSFile[]>(File.ReadAllText(args[a - 1]), joptions);
@@ -495,7 +494,8 @@ namespace PsfParamFinder
 
 								encoding = GetEncoding(options); //ASCII is used for parameter names due to encoding issues
 
-                                files = GetVFSFiles(args[a - 1], pattern, params_ver, use_all_combinations, so, brute, verbose, use_largest_seq, strict, prioritize_info, con, encoding, allvab);
+                                files = GetVFSFiles(args[a - 1], pattern, params_ver, use_all_combinations, so, brute, verbose,
+                                    use_largest_seq, strict, prioritize_info, con, encoding, allvab, search_vgmt);
                             }
                             if (options.Contains('d'))
                             {
@@ -968,7 +968,7 @@ namespace PsfParamFinder
 										Console.WriteLine("PSF set to VFS/PQSF raw");
 										Console.WriteLine($"Usage: {appname} -p [-o:options] dir/json outvfs/out/json/outdir");
 										Console.WriteLine("-o Options:");
-										Array.ForEach(GetOptions("JFDjvdynNqwcaDMPE210usbtlriH"), Console.WriteLine);
+										Array.ForEach(GetOptions("JFDjvdynNqwcaDMPE210usbtlriH~"), Console.WriteLine);
 										return;
 									case "-e":
 										Console.WriteLine("PSF JSON paramater exporter");
@@ -992,7 +992,7 @@ namespace PsfParamFinder
 										Console.WriteLine("Individual PSF file extractor");
 										Console.WriteLine($"Usage: {appname} -x [-o:options] psf [outfile] [outfile2]...");
 										Console.WriteLine("-o Options:");
-										Array.ForEach(GetOptions("EPMHLRtbrUTWYkK210qygGQ6789"), Console.WriteLine);
+										Array.ForEach(GetOptions("EPMHLRtbrUTWYkK210qygGQ6789~"), Console.WriteLine);
 										return;
 									case "-r":
                                         Console.WriteLine("MiniPSF creator/rebaser");
@@ -1260,6 +1260,7 @@ namespace PsfParamFinder
 					'&' => "& - Set Encoding out to ASCII",
 					'*' => "* - Set Encoding out to UTF-8",
 					'(' => "( - Set Encoding out to Latin-1",
+                    '~' => "~ - Don't use VGMToolbox log files",
                     _ => null
 				});
             }
