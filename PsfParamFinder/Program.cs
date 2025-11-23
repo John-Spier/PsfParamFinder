@@ -208,6 +208,7 @@ namespace PsfParamFinder
         public int vh;
         public short vagnum;
         public int[] vags;
+        public int[] vagsizes;
         public int vh_size;
         public int vb_size;
         public int vag_size;
@@ -307,6 +308,7 @@ namespace PsfParamFinder
                     bool fnfile = false;
                     bool export_params = true;
                     bool padend = false;
+                    bool newvag = true;
 					switch (args[0].ToLowerInvariant())
                     {
                         case "-f": //CONVERT FORMAT/TAGGER
@@ -491,11 +493,11 @@ namespace PsfParamFinder
                                 strict = !options.Contains('r');
                                 prioritize_info = !options.Contains('i');
                                 allvab = !options.Contains('H');
-
+                                newvag = !options.Contains('`');
 								encoding = GetEncoding(options); //ASCII is used for parameter names due to encoding issues
 
                                 files = GetVFSFiles(args[a - 1], pattern, params_ver, use_all_combinations, so, brute, verbose,
-                                    use_largest_seq, strict, prioritize_info, con, encoding, allvab, search_vgmt);
+                                    use_largest_seq, strict, prioritize_info, con, encoding, allvab, search_vgmt, newvag);
                             }
                             if (options.Contains('d'))
                             {
@@ -774,8 +776,9 @@ namespace PsfParamFinder
                             searchall = !options.Contains('Y');
                             checkends = options.Contains('k');
                             checkvab = !options.Contains('K');
+							newvag = !options.Contains('`');
 							//search_vgmt = !options.Contains('~');
-                            if (!options.Contains('~'))
+							if (!options.Contains('~'))
                             {
                                 vgmt = FindVgmtFile(Path.GetFullPath(args[a]));
                             }
@@ -814,7 +817,7 @@ namespace PsfParamFinder
                                 basename = args.Last();
                             }
                             SoundInfo s = GetSoundFiles(conv, checkall, verbose, brute, strict, vabp, seqp, searchall, correct, checkends, useprob, checkvab, con, encoding,
-								GetVgmtFiles(vgmt, strict, verbose, con, encoding));
+								GetVgmtFiles(vgmt, strict, verbose, con, encoding), newvag);
                             ExtractFiles(s, conv.ram, args[(a + 1) ..], allseq, sep, allvab, params_ver, basename);
 							if (options.Contains('y'))
 							{
@@ -968,7 +971,7 @@ namespace PsfParamFinder
 										Console.WriteLine("PSF set to VFS/PQSF raw");
 										Console.WriteLine($"Usage: {appname} -p [-o:options] dir/json outvfs/out/json/outdir");
 										Console.WriteLine("-o Options:");
-										Array.ForEach(GetOptions("JFDjvdynNqwcaDMPE210usbtlriH~"), Console.WriteLine);
+										Array.ForEach(GetOptions("JFDjvdynNqwcaDMPE210usbtlriH~`"), Console.WriteLine);
 										return;
 									case "-e":
 										Console.WriteLine("PSF JSON paramater exporter");
@@ -992,7 +995,7 @@ namespace PsfParamFinder
 										Console.WriteLine("Individual PSF file extractor");
 										Console.WriteLine($"Usage: {appname} -x [-o:options] psf [outfile] [outfile2]...");
 										Console.WriteLine("-o Options:");
-										Array.ForEach(GetOptions("EPMHLRtbrUTWYkK210qygGQ6789~"), Console.WriteLine);
+										Array.ForEach(GetOptions("EPMHLRtbrUTWYkK210qygGQ6789~`"), Console.WriteLine);
 										return;
 									case "-r":
                                         Console.WriteLine("MiniPSF creator/rebaser");
@@ -1261,6 +1264,7 @@ namespace PsfParamFinder
 					'*' => "* - Set Encoding out to UTF-8",
 					'(' => "( - Set Encoding out to Latin-1",
                     '~' => "~ - Don't use VGMToolbox log files",
+                    '`' => "` - Select VAGs by size instead of position",
                     _ => null
 				});
             }
@@ -1982,25 +1986,25 @@ namespace PsfParamFinder
 			{
 				SeqNum = 0,
 				Version = 1,
-				MvolL = 127,
-				MvolR = 127,
-				VolL = 127,
-				VolR = 127,
-				RvolL = 64,
-				RvolR = 64,
-				RdepthL = 64,
-				RdepthR = 64,
-				Rdelay = 64,
-				Rmode = 0,
-				Rfeedback = 64,
-				TickMode = 2, //SS_TICK240
+				MvolL = 0xFFFF,
+				MvolR = 0xFFFF,
+				VolL = 0xFFFF,
+				VolR = 0xFFFF,
+				RvolL = 0xFFFF,
+				RvolR = 0xFFFF,
+				RdepthL = 0xFFFF,
+				RdepthR = 0xFFFF,
+				Rdelay = 0xFFFF,
+				Rmode = 0xFFFF,
+				Rfeedback = 0xFFFF,
+				TickMode = 0xFFFF, //SS_TICK240
 				SeqFlags = 0,
 				SeqType = 0
 			};
 
 			try
             {
-                if (!(intpar == null || intpar.psfparams == null)) //Litte endian will take care of the issues for values that don't go above 127
+                if (!(intpar == null || intpar.psfparams == null)) //Little endian will take care of the issues for values that don't go above 127
                 {
                     if (intpar.psfparams.TryGetValue("Master Volume L", out PsfParameter v))
                     {
@@ -2382,8 +2386,8 @@ namespace PsfParamFinder
 					bytes1[9] = v2.rtype;
                     bytes1[10] = v2.rfeedback;
                     bytes1[11] = v2.reserved; //v1.SeqType
-                    bytes1[12] = v2.mvol;
-                    bytes1[13] = v2.vol;
+                    bytes1[12] = v2.vol;
+                    bytes1[13] = v2.mvol;
 					BitConverter.GetBytes(v2.tickmode).CopyTo(bytes1, 14);
                     return bytes1;
 			}
@@ -2393,7 +2397,7 @@ namespace PsfParamFinder
         static VFSFile[] GetVFSFiles(string dir, string pattern = "*.psf", short params_ver = 0, bool use_all_combinations = false,
             SearchOption so = SearchOption.AllDirectories, bool brute = false, bool verbose = false, bool use_largest_seq = false,
             bool strict = true, bool prioritize_info = true, StreamWriter con = null, Encoding enc = null, bool allvabs = false,
-            bool vgmt = true)
+            bool vgmt = true, bool newvag = true)
         {
             con ??= new(Console.OpenStandardOutput());
 			con.AutoFlush = true;
@@ -2424,7 +2428,7 @@ namespace PsfParamFinder
                 }
                 SoundInfo info = GetSoundFiles(LoadFile(Path.GetFullPath(file), enc: enc), 
                     checkbrute: brute, prioritize_spec: strict, verbose: verbose, con: con, enc: enc,
-                    vgmt: GetVgmtFiles(vgmtfile, strict, verbose, con, enc));
+                    vgmt: GetVgmtFiles(vgmtfile, strict, verbose, con, enc), new_vag_calc: newvag);
                 info.source_filename = Path.GetFullPath(file);
                 if (verbose)
                 {
@@ -2542,7 +2546,8 @@ namespace PsfParamFinder
 					int guess = 0;
 					for (int j = 0; j < psffiles[i].seq.Length; j++) //size checking loop
                     {
-                        if (psffiles[i].seq[j].priority == priority && seqmd5[psffiles[i].seq[j].md5] == unique[priority] 
+                        if (psffiles[i].seq[j].priority == priority 
+                            && seqmd5.TryGetValue(psffiles[i].seq[j].md5, out int md5temp) && md5temp == unique[priority] 
                             && (psffiles[i].seq[j].seqend - psffiles[i].seq[j].seqstart) > size)
                         {
                             guess = j;
@@ -2618,7 +2623,7 @@ namespace PsfParamFinder
         static SoundInfo GetSoundFiles(PsfTable table, bool checkall = true, bool verbose = false, bool checkbrute = false, 
             bool prioritize_spec = true, bool allow_vabp = false, bool allow_seqp = true, bool seq_vh_search_all = true, 
             decimal vb_correct_needed = (decimal)1, bool check_sample_ends = false, bool use_probability = false, 
-            bool check_vab = true, StreamWriter con = null, Encoding enc = null, VgmtFile[] vgmt = null)
+            bool check_vab = true, StreamWriter con = null, Encoding enc = null, VgmtFile[] vgmt = null, bool new_vag_calc = true)
         {
             
             MemoryStream rampar = new(table.ram);
@@ -2924,6 +2929,8 @@ namespace PsfParamFinder
                     try
                     {
                         vh.vags = new int[vh.vagnum];
+                        vh.vagsizes = new int[vh.vagnum];
+                        vh.vag_size = 0;
                     }
                     catch (Exception e)
                     {
@@ -2937,6 +2944,7 @@ namespace PsfParamFinder
                         try
                         {
                             vh.vags[i] = BitConverter.ToUInt16(table.ram, vh.vh + vh.vh_size - 0x1FE + (i * 2)) * 8;
+                            vh.vagsizes[i] = vh.vag_size;
                             vh.vag_size += vh.vags[i];
                         }
                         catch (Exception e)
@@ -3135,14 +3143,45 @@ namespace PsfParamFinder
 							con.WriteLine("Checking VB candidate {0}, best candidate has {1} correct samples out of {2}", j, best, k.vagnum);
 						}
 					}
-                    if (candidates[j] > 0)
+                    if (new_vag_calc)
                     {
                         correct = 0;
                         prev_vag = candidates[j];
-                        for (int i = 0; i < k.vagnum; i++) 
+                        next_vag = candidates[j];
+						for (int i = 0; i < k.vagnum; i++)
+						{
+							if (next_vag - candidates[j] == k.vagsizes[i])
+							{
+								correct++;
+							}
+							next_vag = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", prev_vag + 16);
+							if (check_sample_ends || i == k.vagnum - 1) //do this every time? too slow not worth it
+							{
+								if (table.ram[prev_vag + (k.vags[i] - 15)] == 3 ||
+								FindFile(table.ram, "\0\awwwwwwwwwwwwww", prev_vag + 16) - prev_vag == k.vags[i] ||
+								FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", prev_vag + 16) - prev_vag == k.vags[i])
+								{
+									correct++;
+								}
+							}
+							prev_vag = next_vag;
+						}
+						//ints.Add(correct);
+						if (correct > best)
+						{
+							best = correct;
+							guess = j;
+						}
+					}
+                    else if (candidates[j] > 0)
+                    {
+                        correct = 0;
+                        prev_vag = candidates[j];
+                        next_vag = candidates[j];
+                        for (int i = 0; i < k.vagnum; i++)
                         {
                             next_vag = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", prev_vag + 16);
-                            if (next_vag - prev_vag == k.vags[i])
+                            if (!new_vag_calc && next_vag - prev_vag == k.vags[i])
                             {
                                 correct++;
                             }
