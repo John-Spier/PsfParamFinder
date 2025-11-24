@@ -2628,6 +2628,7 @@ namespace PsfParamFinder
             
             MemoryStream rampar = new(table.ram);
             InternalParams ip = Binvals(rampar); // enc: enc
+            string memcache = Encoding.Latin1.GetString(table.ram);
 
 			SoundInfo si = new()
             {
@@ -2767,7 +2768,7 @@ namespace PsfParamFinder
                 SepInfo sepInfo = new();
                 if (seqp)
                 {
-					seqInfo.seqstart = FindFile(table.ram, "SEQp", seqsearch + 4, pcandidates);
+					seqInfo.seqstart = FindFile(table.ram, "SEQp", seqsearch + 4, pcandidates, mem: memcache);
 					if (verbose && seqInfo.seqstart != -1)
 					{
 						con.WriteLine("Warning: SEQp signature detected at {0}", seqInfo.seqstart);
@@ -2775,7 +2776,7 @@ namespace PsfParamFinder
 				}
                 else
                 {
-					seqInfo.seqstart = FindFile(table.ram, "pQES", seqsearch + 4, pcandidates);
+					seqInfo.seqstart = FindFile(table.ram, "pQES", seqsearch + 4, pcandidates, mem: memcache);
 				}
                 if (seqInfo.seqstart > 0 && !seqfiles.Contains(seqInfo.seqstart))
                 {
@@ -2784,12 +2785,12 @@ namespace PsfParamFinder
 					if (BitConverter.ToInt32(table.ram, seqInfo.seqstart + 4) == 0x01000000)
 					{
 						seqInfo.is_sep = false;
-						seqInfo.seqend = FindFile(table.ram, "\x00FF/\0", seqInfo.seqstart) + 3;
+						seqInfo.seqend = FindFile(table.ram, "\x00FF/\0", seqInfo.seqstart, mem: memcache) + 3;
 
 						if (!prioritize_spec || seqInfo.seqend == -1)
 						{
 							int seqend2;
-							seqend2 = FindFile(table.ram, "\x00FF\0\0", seqInfo.seqstart) + 3;
+							seqend2 = FindFile(table.ram, "\x00FF\0\0", seqInfo.seqstart, mem: memcache) + 3;
 							if (seqend2 > 0 && seqend2 < seqInfo.seqend)
 							{
 								if (verbose)
@@ -2799,7 +2800,7 @@ namespace PsfParamFinder
 								seqInfo.seqend = seqend2;
 							}
 
-							seqend2 = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", seqInfo.seqstart) + 16;
+							seqend2 = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", seqInfo.seqstart, mem: memcache) + 16;
 							if (seqend2 > 0 && seqend2 < seqInfo.seqend)
 							{
 								if (verbose)
@@ -2911,7 +2912,7 @@ namespace PsfParamFinder
                 VhInfo vh = new();
                 if (vabp)
                 {
-					vh.vh = FindFile(table.ram, "VABp", vhsearch + 4, pcandidates);
+					vh.vh = FindFile(table.ram, "VABp", vhsearch + 4, pcandidates, mem: memcache);
                     if (verbose && vh.vh != -1)
                     {
                         con.WriteLine("Warning: VABp signature detected at {0}", vh.vh);
@@ -2919,7 +2920,7 @@ namespace PsfParamFinder
 				}
                 else
                 {
-					vh.vh = FindFile(table.ram, "pBAV", vhsearch + 4, pcandidates);
+					vh.vh = FindFile(table.ram, "pBAV", vhsearch + 4, pcandidates, mem: memcache);
 				}
 				if (vh.vh > 0 && !vhfiles.Contains(vh.vh))
                 {
@@ -3007,14 +3008,14 @@ namespace PsfParamFinder
 				int searchloc = -16;
 				do
 				{
-					searchloc = FindFile(table.ram, "\0\awwwwwwwwwwwwww", searchloc + 16);
+					searchloc = FindFile(table.ram, "\0\awwwwwwwwwwwwww", searchloc + 16, mem: memcache);
 					list.Add(searchloc);
 				} while (searchloc >= 0);
 
 				searchloc = -16;
 				do
 				{
-					searchloc = FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", searchloc + 16);
+					searchloc = FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", searchloc + 16, mem: memcache);
 					list.Add(searchloc);
 				} while (searchloc >= 0);
 
@@ -3039,7 +3040,7 @@ namespace PsfParamFinder
 				int rrloc = -16;
 				do
 				{
-					rrloc = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", rrloc + 16);
+					rrloc = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", rrloc + 16, mem: memcache);
 					clist.Add(rrloc);
                     if (verbose && clist.Count % 1000 == 0)
                     {
@@ -3057,7 +3058,7 @@ namespace PsfParamFinder
 			{
 				for (int i = 0; i < candidates.Length; i++)
 				{
-					candidates[i] = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", candidates[i]);
+					candidates[i] = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", candidates[i], mem: memcache);
 				}
 			}
 
@@ -3154,12 +3155,12 @@ namespace PsfParamFinder
 							{
 								correct++;
 							}
-							next_vag = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", prev_vag + 16);
+							next_vag = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", prev_vag + 16, mem: memcache);
 							if (check_sample_ends || i == k.vagnum - 1) //do this every time? too slow not worth it
 							{
 								if (table.ram[prev_vag + (k.vags[i] - 15)] == 3 ||
-								FindFile(table.ram, "\0\awwwwwwwwwwwwww", prev_vag + 16) - prev_vag == k.vags[i] ||
-								FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", prev_vag + 16) - prev_vag == k.vags[i])
+								FindFile(table.ram, "\0\awwwwwwwwwwwwww", prev_vag + 16, mem: memcache) - prev_vag == k.vags[i] ||
+								FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", prev_vag + 16, mem: memcache) - prev_vag == k.vags[i])
 								{
 									correct++;
 								}
@@ -3180,7 +3181,7 @@ namespace PsfParamFinder
                         next_vag = candidates[j];
                         for (int i = 0; i < k.vagnum; i++)
                         {
-                            next_vag = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", prev_vag + 16);
+                            next_vag = FindFile(table.ram, "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0", prev_vag + 16, mem: memcache);
                             if (!new_vag_calc && next_vag - prev_vag == k.vags[i])
                             {
                                 correct++;
@@ -3188,8 +3189,8 @@ namespace PsfParamFinder
                             if (check_sample_ends || i == k.vagnum - 1) //do this every time? too slow not worth it
                             {
                                 if (table.ram[prev_vag + (k.vags[i] - 15)] == 3 ||
-                                FindFile(table.ram, "\0\awwwwwwwwwwwwww", prev_vag + 16) - prev_vag == k.vags[i] ||
-                                FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", prev_vag + 16) - prev_vag == k.vags[i])
+                                FindFile(table.ram, "\0\awwwwwwwwwwwwww", prev_vag + 16, mem: memcache) - prev_vag == k.vags[i] ||
+                                FindFile(table.ram, "\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a\a", prev_vag + 16, mem: memcache) - prev_vag == k.vags[i])
                                 {
                                     correct++;
                                 }
@@ -3331,12 +3332,12 @@ namespace PsfParamFinder
 
             return [.. list];
         }
-        static int FindFile(byte[] ram, string magic, int start = 0, int[] candidates = null, bool reverse = false, Encoding enc = null)
+        static int FindFile(byte[] ram, string magic, int start = 0, int[] candidates = null, bool reverse = false, Encoding enc = null, string mem = null)
         {
             candidates ??= [];
             enc ??= Encoding.Latin1;
 			//StreamReader sr = new StreamReader(ram, System.Text.Encoding.Latin1); //need correct byte length
-			string mem = enc.GetString(ram);
+			mem ??= enc.GetString(ram);
             if (candidates.Length > 0)
             {
                 byte[] bytes = enc.GetBytes(magic);
