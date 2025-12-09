@@ -1795,6 +1795,9 @@ namespace PsfParamFinder
                         case ".vfs":
                             direct.filetype = 0xFFFFFFFE;
                             break;
+                        case ".cnf":
+                            direct.filetype = 0xFFFFFF16;
+                            break;
                     }
                     if (allfiles || direct.filetype != 0)
                     {
@@ -2627,8 +2630,9 @@ namespace PsfParamFinder
         {
             
             MemoryStream rampar = new(table.ram);
-            InternalParams ip = Binvals(rampar); // enc: enc
-            string memcache = Encoding.Latin1.GetString(table.ram);
+			string memcache = Encoding.Latin1.GetString(table.ram); //latin 1 wont change addresses
+			InternalParams ip = Binvals(rampar, psfexe: memcache); // enc: enc
+            
 
 			SoundInfo si = new()
             {
@@ -4238,7 +4242,7 @@ namespace PsfParamFinder
 			};
 			return psf;
         }
-        static InternalParams Binvals(MemoryStream fs, bool name_length = false, Encoding enc = null)
+        static InternalParams Binvals(MemoryStream fs, bool name_length = false, Encoding enc = null, string psfexe = null)
         {// assuming now that the segment is consistent
 			ArgumentNullException.ThrowIfNull(fs);
             enc ??= Encoding.Latin1; //Multibyte encodings all cause major issues
@@ -4256,7 +4260,7 @@ namespace PsfParamFinder
                 
                 BinaryReader br = new(fs);
                 StreamReader sr = new(fs, enc);
-                string psfexe = sr.ReadToEnd();
+                psfexe ??= sr.ReadToEnd();
                 int index_sig = psfexe.IndexOf("PSF_DRIVER_INFO:");
 				InternalParams ip = new()
 				{
