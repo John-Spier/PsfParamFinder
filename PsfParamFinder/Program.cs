@@ -1801,7 +1801,11 @@ namespace PsfParamFinder
                     }
                     if (allfiles || direct.filetype != 0)
                     {
-                        directs.Add(direct);
+						if (uint.TryParse(Path.GetExtension(f).ToUpperInvariant(), out uint exthex))
+						{
+							direct.filetype = exthex;
+						}
+						directs.Add(direct);
                     }
 
                 }
