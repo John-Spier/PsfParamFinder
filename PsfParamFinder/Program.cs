@@ -10,6 +10,7 @@ using System.Linq;
 using System.Buffers.Binary;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Globalization;
 
 
 //using System.Runtime.Serialization.Formatters.Binary;
@@ -1801,7 +1802,7 @@ namespace PsfParamFinder
                     }
                     if (allfiles || direct.filetype != 0)
                     {
-						if (uint.TryParse(Path.GetExtension(f).ToUpperInvariant(), out uint exthex))
+						if (uint.TryParse(Path.GetExtension(f).ToUpperInvariant(), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint exthex))
 						{
 							direct.filetype = exthex;
 						}
