@@ -310,7 +310,9 @@ namespace PsfParamFinder
                     bool export_params = true;
                     bool padend = false;
                     bool newvag = true;
-					switch (args[0].ToLowerInvariant())
+                    bool zero_vol = false;
+                    bool zero_reverb = true;
+                    switch (args[0].ToLowerInvariant())
                     {
                         case "-f": //CONVERT FORMAT/TAGGER
                             if (args.Length > 3 && args[1].StartsWith("-o:", StringComparison.OrdinalIgnoreCase))
@@ -432,7 +434,9 @@ namespace PsfParamFinder
                             fnfile = options.Contains('N');
                             export_params = !options.Contains('q');
                             bool search_vgmt = !options.Contains('~');
-							if (options.Contains('J'))
+                            zero_vol = options.Contains('?');
+                            zero_reverb = !options.Contains('/');
+                            if (options.Contains('J'))
                             {
                                 files = JsonSerializer.Deserialize<VFSFile[]>(File.ReadAllText(args[a - 1]), joptions);
                             }
@@ -502,7 +506,7 @@ namespace PsfParamFinder
                             }
                             if (options.Contains('d'))
                             {
-                                ExtractFileList(files, args[a], fndir, fnfile, export_params);
+                                ExtractFileList(files, args[a], fndir, fnfile, export_params, zero_vol, zero_reverb);
                             }
                             else if (options.Contains('j'))
                             {
@@ -511,7 +515,7 @@ namespace PsfParamFinder
                             else if (options.Contains('v'))
                             {
 								encout = GetEncodingOut(options);
-								SaveVFSFile(args[a], files, encout);
+								SaveVFSFile(args[a], files, encout, zero_vol, zero_reverb);
                             }
 							if (options.Contains('y'))
 							{
@@ -778,8 +782,10 @@ namespace PsfParamFinder
                             checkends = options.Contains('k');
                             checkvab = !options.Contains('K');
 							newvag = !options.Contains('`');
-							//search_vgmt = !options.Contains('~');
-							if (!options.Contains('~'))
+                            zero_vol = options.Contains('?');
+                            zero_reverb = !options.Contains('/');
+                            //search_vgmt = !options.Contains('~');
+                            if (!options.Contains('~'))
                             {
                                 vgmt = FindVgmtFile(Path.GetFullPath(args[a]));
                             }
@@ -819,7 +825,7 @@ namespace PsfParamFinder
                             }
                             SoundInfo s = GetSoundFiles(conv, checkall, verbose, brute, strict, vabp, seqp, searchall, correct, checkends, useprob, checkvab, con, encoding,
 								GetVgmtFiles(vgmt, strict, verbose, con, encoding), newvag);
-                            ExtractFiles(s, conv.ram, args[(a + 1) ..], allseq, sep, allvab, params_ver, basename);
+                            ExtractFiles(s, conv.ram, args[(a + 1) ..], allseq, sep, allvab, params_ver, basename, zero_vol, zero_reverb);
 							if (options.Contains('y'))
 							{
 								con.Flush();
@@ -972,7 +978,7 @@ namespace PsfParamFinder
 										Console.WriteLine("PSF set to VFS/PQSF raw");
 										Console.WriteLine($"Usage: {appname} -p [-o:options] dir/json outvfs/out/json/outdir");
 										Console.WriteLine("-o Options:");
-										Array.ForEach(GetOptions("JFDjvdynNqwcaDMPE210usbtlriH~`"), Console.WriteLine);
+										Array.ForEach(GetOptions("JFDjvdynNqwcaDMPE210usbtlriH~`?/"), Console.WriteLine);
 										return;
 									case "-e":
 										Console.WriteLine("PSF JSON paramater exporter");
@@ -996,7 +1002,7 @@ namespace PsfParamFinder
 										Console.WriteLine("Individual PSF file extractor");
 										Console.WriteLine($"Usage: {appname} -x [-o:options] psf [outfile] [outfile2]...");
 										Console.WriteLine("-o Options:");
-										Array.ForEach(GetOptions("EPMHLRtbrUTWYkK210qygGQ6789~`"), Console.WriteLine);
+										Array.ForEach(GetOptions("EPMHLRtbrUTWYkK210qygGQ6789~`?/"), Console.WriteLine);
 										return;
 									case "-r":
                                         Console.WriteLine("MiniPSF creator/rebaser");
@@ -1127,7 +1133,7 @@ namespace PsfParamFinder
                                 },
                                 addr = Convert.ToInt32(hexstr[0], 16),
                                 length = Convert.ToInt32(hexstr[1], 16) - Convert.ToInt32(hexstr[0], 16) + 1,
-                                fnum = int.Parse(Path.GetFileNameWithoutExtension(batstr[3])[^4..], System.Globalization.NumberStyles.HexNumber)
+                                fnum = int.Parse(Path.GetFileNameWithoutExtension(batstr[3])[^4..], NumberStyles.HexNumber)
                             });
                         }
 						catch (Exception bx)
@@ -1159,7 +1165,7 @@ namespace PsfParamFinder
                                 },
                                 addr = Convert.ToInt32(txtstr[1].Split(' ')[0], 16),
                                 length = Convert.ToInt32(txtstr[2].Split(' ')[0], 16),
-                                fnum = int.Parse(Path.GetFileNameWithoutExtension(txtstr[3])[^4..], System.Globalization.NumberStyles.HexNumber)
+                                fnum = int.Parse(Path.GetFileNameWithoutExtension(txtstr[3])[^4..], NumberStyles.HexNumber)
                             });
                         }
 						catch (Exception yx)
@@ -1266,6 +1272,8 @@ namespace PsfParamFinder
 					'(' => "( - Set Encoding out to Latin-1",
                     '~' => "~ - Don't use VGMToolbox log files",
                     '`' => "` - Select VAGs by size instead of position",
+                    '?' => "? - Allow volume/master volume to be 0",
+                    '/' => "/ - Don't allow tracks to have disabled reverb",
                     _ => null
 				});
             }
@@ -1465,7 +1473,8 @@ namespace PsfParamFinder
 
 			return psf1;
         }
-		static void ExtractFileList(VFSFile[] files, string basedir, bool filename_dir = true, bool filename_file = false, bool export_parameters = true)
+		static void ExtractFileList(VFSFile[] files, string basedir, bool filename_dir = true, bool filename_file = false, 
+            bool export_parameters = true, bool allow_zero_volume = false, bool allow_no_reverb = true)
 		{
 			//basedir = Path.TrimEndingDirectorySeparator(basedir) + Path.DirectorySeparatorChar;
 			foreach (VFSFile file in files)
@@ -1513,7 +1522,7 @@ namespace PsfParamFinder
 
                     if (export_parameters && file.use_params)
                     {
-                        File.WriteAllBytes(fn + ".vt", GetBinaryParams(file.int_params, file.params_ver));
+                        File.WriteAllBytes(fn + ".vt", GetBinaryParams(file.int_params, file.params_ver, allow_zero_volume, allow_no_reverb));
                     }
                 }
                 catch (Exception e)
@@ -1621,8 +1630,8 @@ namespace PsfParamFinder
 			return default_enc;
 		}
 
-		static int ExtractFiles(SoundInfo sounds, byte[] ram, string[] fn = null, bool extract_all_seqs = false,
-            bool extract_sep = true, bool extract_all_vabs = false, short extract_params = -1, string basename = null)
+		static int ExtractFiles(SoundInfo sounds, byte[] ram, string[] fn = null, bool extract_all_seqs = false, bool extract_sep = true, 
+            bool extract_all_vabs = false, short extract_params = -1, string basename = null, bool allow_zero_volume = false, bool allow_no_reverb = true)
         {
             int namebase = 0;
             fn ??= [];
@@ -1733,7 +1742,7 @@ namespace PsfParamFinder
             if (extract_params > -1)
             {
                 MemoryStream ms = new(ram);
-                File.WriteAllBytes(ExportName(fn, basename, namebase, ".vt"), GetBinaryParams(Binvals(ms), extract_params));
+                File.WriteAllBytes(ExportName(fn, basename, namebase, ".vt"), GetBinaryParams(Binvals(ms), extract_params, allow_zero_volume, allow_no_reverb));
             }
             return namebase;
         }
@@ -1851,7 +1860,7 @@ namespace PsfParamFinder
                 return base_pad;
             }
         }
-        static void SaveVFSFile(string filename, VFSFile[] files, Encoding encout = null)
+        static void SaveVFSFile(string filename, VFSFile[] files, Encoding encout = null, bool allow_zero_volume = false, bool allow_no_reverb = true)
         {
             encout ??= Encoding.ASCII;
             BinaryWriter writer = new(new FileStream(filename, FileMode.Create));
@@ -1878,7 +1887,7 @@ namespace PsfParamFinder
                         files[i].binary.file1_size += 6; //remove SEP sequence ID (2), add SEQ header (8) 
                     }
                     files[i].binary.size = files[i].binary.file1_size + GetPadding(files[i].binary.file1_size, 4);
-                    files[i].binary.bin_params = GetBinaryParams(files[i].int_params, files[i].params_ver);
+                    files[i].binary.bin_params = GetBinaryParams(files[i].int_params, files[i].params_ver, allow_zero_volume, allow_no_reverb);
 					files[i].binary.file2_size = files[i].binary.bin_params.Length;
 					files[i].binary.size += files[i].binary.file2_size + GetPadding(files[i].binary.file2_size, 4) + 24;
                 }
@@ -1890,21 +1899,8 @@ namespace PsfParamFinder
                 }
 
                 files[i].binary.name = new byte[64];
-                int charsize;
-                switch (encout.WebName)
-                {
-                    case "utf-8":
-                        charsize = 15;
-                        break;
-                    case "shift_jis":
-                        charsize = 31;
-                        break;
-                    default: //ascii and latin 1
-                        charsize = 63;
-                        break;
-                }
-                int namesize = int.Min(files[i].name.Length, charsize);
-				encout.GetBytes(files[i].name, 0, namesize, files[i].binary.name, 0);
+                encout.GetEncoder().Convert(files[i].name.ToCharArray(), 0, files[i].name.Length, files[i].binary.name, 0, files[i].binary.name.Length - 1, true, out _, out _, out _);
+				//encout.GetBytes(files[i].name, 0, namesize, files[i].binary.name, 0);
                 files[i].binary.addr = addr;
                 files[i].binary.padding = GetPadding(files[i].binary.size);
                 addr += files[i].binary.size + files[i].binary.padding;
@@ -2314,6 +2310,7 @@ namespace PsfParamFinder
 				rdepth = (byte)((v1.RdepthL + v1.RdepthR) / 2),
 				rdelay = (byte)v1.Rdelay,
 				rtype = (byte)v1.Rmode,
+                reserved = 0xF,
 				mvol = (byte)((v1.MvolL + v1.MvolR) / 2),
 				vol = (byte)((v1.VolL + v1.VolR) / 2),
 				tickmode = (ushort)v1.TickMode,
@@ -2356,7 +2353,7 @@ namespace PsfParamFinder
 				_ => 0,
 			};
 		}
-        static byte[] GetBinaryParams(InternalParams intpar, short version)
+        static byte[] GetBinaryParams(InternalParams intpar, short version, bool allow_zero_volume = true, bool allow_no_reverb = true)
         {
             switch (version)
             {
@@ -2364,6 +2361,40 @@ namespace PsfParamFinder
                     return BitConverter.GetBytes(0x00000000);
                 case 1:
                     ParamsV1 v1 = GetParamsV1(intpar);
+                    if (!allow_zero_volume)
+                    {
+                        if (v1.VolL == 0)
+                        {
+                            v1.VolL = 0xFFFF;
+                        }
+                        if (v1.VolR == 0)
+                        {
+                            v1.VolR = 0xFFFF;
+                        }
+                        if (v1.MvolL == 0)
+                        {
+                            v1.MvolL = 0xFFFF;
+                        }
+                        if (v1.MvolR == 0)
+                        {
+                            v1.MvolR = 0xFFFF;
+                        }
+                        if (v1.RvolL == 0)
+                        {
+                            v1.RvolL = 0xFFFF;
+                        }
+                        if (v1.RvolR == 0)
+                        {
+                            v1.RvolR = 0xFFFF;
+                        }
+                    }
+                    if (!allow_no_reverb)
+                    {
+                        if (v1.Rmode == 0)
+                        {
+                            v1.Rmode = 0xFFFF;
+                        }
+                    }
                     byte[] bytes = new byte[32];
                     BitConverter.GetBytes(v1.SeqNum).CopyTo(bytes, 0);
 					BitConverter.GetBytes(v1.Version).CopyTo(bytes, 2);
@@ -2384,6 +2415,28 @@ namespace PsfParamFinder
 					return bytes;
                 case 2:
                     ParamsV2 v2 = GetParamsV2(intpar);
+                    if (!allow_zero_volume)
+                    {
+                        if (v2.vol == 0)
+                        {
+                            v2.vol = 0xFF;
+                        }
+                        if (v2.mvol == 0)
+                        {
+                            v2.mvol = 0xFF;
+                        }
+                        if (v2.rvol == 0)
+                        {
+                            v2.rvol = 0xFF;
+                        }
+                    }
+                    if (!allow_no_reverb)
+                    {
+                        if (v2.rtype == 0)
+                        {
+                            v2.rtype = 0xFF;
+                        }
+                    }
                     byte[] bytes1 = new byte[16];
                     BitConverter.GetBytes(v2.SeqNum).CopyTo(bytes1, 0);
 					BitConverter.GetBytes(v2.Version).CopyTo(bytes1, 2);
@@ -2628,10 +2681,11 @@ namespace PsfParamFinder
 			return [.. vabfiles];
         }
 
-        static SoundInfo GetSoundFiles(PsfTable table, bool checkall = true, bool verbose = false, bool checkbrute = false, 
-            bool prioritize_spec = true, bool allow_vabp = false, bool allow_seqp = true, bool seq_vh_search_all = true, 
-            decimal vb_correct_needed = (decimal)1, bool check_sample_ends = false, bool use_probability = false, 
-            bool check_vab = true, StreamWriter con = null, Encoding enc = null, VgmtFile[] vgmt = null, bool new_vag_calc = true)
+        static SoundInfo GetSoundFiles(PsfTable table, bool checkall = true, bool verbose = false, bool checkbrute = false,
+            bool prioritize_spec = true, bool allow_vabp = false, bool allow_seqp = true, bool seq_vh_search_all = true,
+            decimal vb_correct_needed = (decimal)1, bool check_sample_ends = false, bool use_probability = false,
+            bool check_vab = true, StreamWriter con = null, Encoding enc = null, VgmtFile[] vgmt = null,
+            bool new_vag_calc = true)
         {
             
             MemoryStream rampar = new(table.ram);
