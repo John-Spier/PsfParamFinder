@@ -978,7 +978,7 @@ namespace PsfParamFinder
 										Console.WriteLine("PSF set to VFS/PQSF raw");
 										Console.WriteLine($"Usage: {appname} -p [-o:options] dir/json outvfs/out/json/outdir");
 										Console.WriteLine("-o Options:");
-										Array.ForEach(GetOptions("JFDjvdynNqwcaDMPE210usbtlriH~`?/"), Console.WriteLine);
+										Array.ForEach(GetOptions("JFDjvdynNqwcaDMPE210usbtlriH~`?/6789^&*("), Console.WriteLine);
 										return;
 									case "-e":
 										Console.WriteLine("PSF JSON paramater exporter");
