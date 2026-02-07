@@ -2379,6 +2379,22 @@ namespace PsfParamFinder
                         {
                             v1.MvolR = 0xFFFF;
                         }
+                        if (v1.RdepthL == 0)
+                        {
+                            v1.RdepthL = 0xFFFF;
+                        }
+                        if (v1.RdepthR == 0)
+                        {
+                            v1.RdepthR = 0xFFFF;
+                        }
+                        if (v1.Rdelay == 0)
+                        {
+                            v1.Rdelay = 0xFFFF;
+                        }
+                        if (v1.Rfeedback == 0)
+                        {
+                            v1.Rfeedback = 0xFFFF;
+                        }
                         if (v1.RvolL == 0)
                         {
                             v1.RvolL = 0xFFFF;
@@ -2424,6 +2440,18 @@ namespace PsfParamFinder
                         if (v2.mvol == 0)
                         {
                             v2.mvol = 0xFF;
+                        }
+                        if (v2.rdepth == 0)
+                        {
+                            v2.rdepth = 0xFF;
+                        }
+                        if (v2.rdelay == 0)
+                        {
+                            v2.rdelay = 0xFF;
+                        }
+                        if (v2.rfeedback == 0)
+                        {
+                            v2.rfeedback = 0xFF;
                         }
                         if (v2.rvol == 0)
                         {
