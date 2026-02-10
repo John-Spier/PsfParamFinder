@@ -2,7 +2,8 @@
 using System.Collections.Generic;
 using System.IO;
 using Ionic.Zlib;
-using Force.Crc32;
+//using Force.Crc32;
+using System.IO.Hashing;
 using UtfUnknown;
 using System.Buffers;
 using System.Text;
@@ -17,7 +18,7 @@ using System.Globalization;
 //use ipaddress fucntions to change endians?
 namespace PsfParamFinder
 {
-	public enum PsfTypes
+	public enum PsfTypes //attributes?
     {
         EXE,
         PSF,
@@ -1075,7 +1076,7 @@ namespace PsfParamFinder
             Console.WriteLine("-e: Export PSF_DRIVER_INFO block and strings to JSON");
             Console.WriteLine("-i: Import PSF_DRIVER_INFO and optionally string table from JSON");
             Console.WriteLine("-l: Print all parameters from PSF set/sets");
-            Console.WriteLine("-x: Extract SEQ/VH/VB/SEP/parameters from single MiniPSFPSF/PSF/EXE file");
+            Console.WriteLine("-x: Extract SEQ/VH/VB/SEP/parameters from single MiniPSF/PSF/EXE file");
             Console.WriteLine("-r: Create/rebase MiniPSF from new PSFLib");
 			Console.WriteLine("-m: Create/rebase MiniPSF set from new PSFLib");
             Console.WriteLine("-s: Extract SEQ files from SEP");
@@ -3986,6 +3987,7 @@ namespace PsfParamFinder
             foreach (PsfFile psf in ptab.minipsfs)
             {
                 psf.start -= lowest - 2048;
+                psf.end -= lowest - 2048;
             }
             ptab.ram = mem;
             return ptab;
@@ -4038,7 +4040,7 @@ namespace PsfParamFinder
                 Array.Copy(tempram, 2048, tab.ram, info.start, bytesread - 2048);
                 binary.BaseStream.Seek(16 + rsize, SeekOrigin.Begin);
                 tempram = binary.ReadBytes(psize);
-                if (Crc32Algorithm.Compute(tempram) != info.crc)
+                if (BitConverter.ToUInt32(Crc32.Hash(tempram)) != info.crc)
                 {
                     Console.Error.WriteLine("{0}: Wrong CRC!", fn);
                 }
@@ -4153,7 +4155,7 @@ namespace PsfParamFinder
 				psfFile.tags ??= [];
                 if (string.IsNullOrEmpty(fn))
                 {
-                    fn = psfFile.filename;
+                    fn = Path.GetFileName(psfFile.filename);
                 }
 				BinaryWriter bw = new(new FileStream(fn, FileMode.Create));
                 bw.Write(0x01465350); //PSF signature
@@ -4170,7 +4172,7 @@ namespace PsfParamFinder
                 byte[] tempram = mem.ToArray();
 
 				bw.Write(tempram.Length);
-				bw.Write(Crc32Algorithm.Compute(tempram));
+				bw.Write(BitConverter.ToUInt32(Crc32.Hash(tempram)));
                 bw.Write(psfFile.reserved_area);
                 bw.Write(tempram);
 
@@ -4307,7 +4309,7 @@ namespace PsfParamFinder
             }
 			f.BaseStream.Seek(16 + rsize, SeekOrigin.Begin);
             tempram = f.ReadBytes(psize);
-            if (Crc32Algorithm.Compute(tempram) != info.crc)
+            if (BitConverter.ToUInt32(Crc32.Hash(tempram)) != info.crc)
             {
                 Console.Error.WriteLine("Wrong CRC!");
             }
