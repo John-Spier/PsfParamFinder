@@ -4035,7 +4035,7 @@ namespace PsfParamFinder
 
                 info.segment = BitConverter.ToUInt32(info.headersect, 24) / 0x20000000;
                 info.start = BitConverter.ToUInt32(info.headersect, 24) % 0x20000000;
-                info.end = uint.Min(info.start + (uint)(bytesread - 2048), (uint)tempram.Length);
+                info.end = info.start + (uint)(bytesread - 2048);//, (uint)tempram.Length);
 
                 Array.Copy(tempram, 2048, tab.ram, info.start, bytesread - 2048);
                 binary.BaseStream.Seek(16 + rsize, SeekOrigin.Begin);
