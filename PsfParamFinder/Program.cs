@@ -1278,7 +1278,7 @@ namespace PsfParamFinder
                     _ => null
 				});
             }
-            return ret.Where(x => x != null).ToArray();
+            return [.. ret.Where(x => x != null)];
         }
         static void GetMiniPSFsFromDir(string path, string libpath, string zerolib = null, bool verbose = false, StreamWriter con = null,
             bool padend = true, string pattern = "*.*", Encoding enc = null, Encoding outenc = null, SearchOption so = SearchOption.AllDirectories)
@@ -2793,7 +2793,7 @@ namespace PsfParamFinder
                 }
             }
 
-            List<int> plist = clist.Distinct().ToList();
+            List<int> plist = [.. clist.Distinct()];
 			int[] pcandidates = [.. plist];
             int param_num = pcandidates.Length;
 			List<SeqInfo> seqs = [];
@@ -2960,7 +2960,7 @@ namespace PsfParamFinder
 					if (allow_seqp && !seqp && seqsearch == -1)
 					{
 						seqp = true;
-						plist = clist.Distinct().ToList();
+						plist = [.. clist.Distinct()];
 						pcandidates = [.. plist];
 					}
                     else
@@ -2988,7 +2988,7 @@ namespace PsfParamFinder
                 return si;
             }
 
-			plist = clist.Distinct().ToList();
+			plist = [.. clist.Distinct()];
 			pcandidates = [.. plist];
             List<int> vhfiles = [];
             List<VhInfo> vagfiles = [];
@@ -3080,14 +3080,14 @@ namespace PsfParamFinder
 					if (allow_vabp && !vabp && vhsearch == -1)
 					{
 						vabp = true;
-						plist = clist.Distinct().ToList();
+						plist = [.. clist.Distinct()];
 						pcandidates = [.. plist];
 						vh_from_params = true;
 					}
                     if (strict_size && vhsearch == -1 && vagfiles.Count == 0)
                     {
                         strict_size = false;
-						plist = clist.Distinct().ToList();
+						plist = [.. clist.Distinct()];
 						pcandidates = [.. plist];
 						vh_from_params = true;
 					}
@@ -3141,7 +3141,7 @@ namespace PsfParamFinder
 				} while (rrloc >= 0);
 
 			}
-			int[] candidates = clist.Distinct().ToArray();
+			int[] candidates = [.. clist.Distinct()];
             if (verbose)
             {
                 con.WriteLine("{0} total VB candidates found", candidates.Length);
@@ -3486,7 +3486,7 @@ namespace PsfParamFinder
                 enc ??= Encoding.UTF8;
 				outenc ??= Encoding.UTF8;
 			}
-            if (string.IsNullOrEmpty(tagnewline))
+            if (string.IsNullOrEmpty(tagnewline)) //make default this?
             {
                 tagnewline = Environment.NewLine;
             }
@@ -3494,7 +3494,7 @@ namespace PsfParamFinder
             List<string> rtags = [];
             if (replacetags)
             {
-                rtags = liblines.Select(x => x.Split('=', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() + '=').ToList();
+                rtags = [.. liblines.Select(x => x.Split('=', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() + '=')];
             }
             if (!keeplibs)
             {
@@ -4102,9 +4102,18 @@ namespace PsfParamFinder
 
 				if (cleanlibs)
                 {
-					oldtags = new byte[psfTable.minipsfs[pn].tags.Length];
+                    Encoding e;
+                    try
+                    {
+                        e = Encoding.GetEncoding(psfTable.minipsfs[pn].tag_encoding);
+                    }
+                    finally { }
+                    if (enc != null) {
+                        e = enc;
+                    }
+                    oldtags = new byte[psfTable.minipsfs[pn].tags.Length];
 					Array.Copy(psfTable.minipsfs[pn].tags, oldtags, oldtags.Length);
-					psfTable.minipsfs[pn].tags = RemoveLibTags(oldtags, enc);
+					psfTable.minipsfs[pn].tags = RemoveLibTags(oldtags, e);
 				}
 
                 Array.Copy(psfTable.ram, psfTable.minipsfs[pn].headersect, 2048);
@@ -4114,12 +4123,10 @@ namespace PsfParamFinder
 
             }
             
-            foreach (PsfFile b in psfTable.minipsfs)
+            foreach (PsfFile b in psfTable.minipsfs.Where(x => x.modified))
             {
-                if (b.modified) {
-                    SavePsfFile(psfTable.ram, b, fn[i]);
-                    i++;
-				}
+                SavePsfFile(psfTable.ram, b, fn[i]);
+                i++;
             }
 
             if (resized)
@@ -4244,7 +4251,7 @@ namespace PsfParamFinder
 
                     }
                 }
-                if (fname == null || fname.Length == 0)
+                if (string.IsNullOrEmpty(fname))
                 {
                     return Path.GetFileNameWithoutExtension(psfFile.filename); //if both are null returns null
                 }
